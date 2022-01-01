@@ -1,0 +1,45 @@
+syntax = "proto3";
+option go_package = "github.com/kralicky/totem_test";
+package totem_test;
+import "github.com/kralicky/totem/totem.proto";
+
+service Test {
+  rpc TestStream(stream totem.RPC) returns (stream totem.RPC);
+}
+
+service CToS {
+  rpc AskServer(CRequest) returns (SResponse);
+}
+
+service SToC {
+  rpc AskClient(SRequest) returns (CResponse);
+}
+
+message CRequest {
+  string question = 1;
+}
+
+message SResponse {
+  string answer = 1;
+}
+
+message SRequest {
+  string answer = 1;
+}
+
+message CResponse {
+  string question = 1;
+}
+
+service Calculator {
+  rpc Add(AddRequest) returns (AddResponse);
+}
+
+message AddRequest {
+  int32 lhs = 1;
+  int32 rhs = 2;
+}
+
+message AddResponse {
+  int64 result = 1;
+}
