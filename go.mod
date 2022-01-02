@@ -1,6 +1,6 @@
 module github.com/kralicky/totem
 
-go 1.18
+go 1.17
 
 require (
 	github.com/kralicky/ragu v0.2.1-0.20220102042315-b36e475ded43

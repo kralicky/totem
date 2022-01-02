@@ -63,17 +63,17 @@ type streamHandler struct {
 	sendLock    sync.Mutex
 	pendingRPCs map[uint64]chan *RPC
 	pendingLock sync.RWMutex
-	info        *serviceInfo
+	methods     map[string]serviceMethod
 	receiver    *recvWrapper
 	kickOnce    sync.Once
 }
 
-func newStreamHandler(stream Stream, info *serviceInfo) *streamHandler {
+func newStreamHandler(stream Stream, methods map[string]serviceMethod) *streamHandler {
 	return &streamHandler{
 		stream:      stream,
 		count:       atomic.NewUint64(0),
 		pendingRPCs: map[uint64]chan *RPC{},
-		info:        info,
+		methods:     methods,
 		receiver:    newRecvWrapper(stream),
 	}
 }
@@ -146,11 +146,11 @@ func (sh *streamHandler) Run() error {
 		case *RPC_Request:
 			// Received a request from the client
 			method := msg.GetMethod()
-			if m, ok := sh.info.methods[method]; ok {
+			if m, ok := sh.methods[method]; ok {
 				// Found the method
-				if m.Handler == nil {
-					sh.ReplyErr(msg.Tag, status.Errorf(codes.Unimplemented,
-						"method %s not implemented", method))
+				if m.method.Handler == nil {
+					sh.ReplyErr(msg.Tag, status.Errorf(codes.Internal,
+						"method %s has no handler", method))
 					continue
 				}
 				// Found a handler, call it
@@ -165,7 +165,7 @@ func (sh *streamHandler) Run() error {
 				}
 				go func() {
 					response, err :=
-						m.Handler(sh.info.serviceImpl, addTotemToContext(ctx), df, nil)
+						m.method.Handler(m.serviceImpl, addTotemToContext(ctx), df, nil)
 					if err != nil {
 						sh.ReplyErr(msg.Tag, err)
 						return

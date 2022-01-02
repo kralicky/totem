@@ -12,6 +12,7 @@ import (
 	grpc "google.golang.org/grpc"
 	codes "google.golang.org/grpc/codes"
 	status "google.golang.org/grpc/status"
+	emptypb "google.golang.org/protobuf/types/known/emptypb"
 )
 
 // This is a compile-time assertion to ensure that this generated file
@@ -137,258 +138,466 @@ var Test_ServiceDesc = grpc.ServiceDesc{
 	Metadata: "test/test.proto",
 }
 
-// CToSClient is the client API for CToS service.
+// IncrementClient is the client API for Increment service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type CToSClient interface {
-	AskServer(ctx context.Context, in *CRequest, opts ...grpc.CallOption) (*SResponse, error)
+type IncrementClient interface {
+	Inc(ctx context.Context, in *Number, opts ...grpc.CallOption) (*Number, error)
 }
 
-type cToSClient struct {
+type incrementClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewCToSClient(cc grpc.ClientConnInterface) CToSClient {
-	return &cToSClient{cc}
+func NewIncrementClient(cc grpc.ClientConnInterface) IncrementClient {
+	return &incrementClient{cc}
 }
 
-func (c *cToSClient) AskServer(ctx context.Context, in *CRequest, opts ...grpc.CallOption) (*SResponse, error) {
-	out := new(SResponse)
-	err := c.cc.Invoke(ctx, "/totem_test.CToS/AskServer", in, out, opts...)
+func (c *incrementClient) Inc(ctx context.Context, in *Number, opts ...grpc.CallOption) (*Number, error) {
+	out := new(Number)
+	err := c.cc.Invoke(ctx, "/totem_test.Increment/Inc", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// CToSServer is the server API for CToS service.
-// All implementations must embed UnimplementedCToSServer
+// IncrementServer is the server API for Increment service.
+// All implementations must embed UnimplementedIncrementServer
 // for forward compatibility
-type CToSServer interface {
-	AskServer(context.Context, *CRequest) (*SResponse, error)
-	mustEmbedUnimplementedCToSServer()
+type IncrementServer interface {
+	Inc(context.Context, *Number) (*Number, error)
+	mustEmbedUnimplementedIncrementServer()
 }
 
-// UnimplementedCToSServer must be embedded to have forward compatible implementations.
-type UnimplementedCToSServer struct {
+// UnimplementedIncrementServer must be embedded to have forward compatible implementations.
+type UnimplementedIncrementServer struct {
 }
 
-func (UnimplementedCToSServer) AskServer(context.Context, *CRequest) (*SResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AskServer not implemented")
+func (UnimplementedIncrementServer) Inc(context.Context, *Number) (*Number, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Inc not implemented")
 }
-func (UnimplementedCToSServer) mustEmbedUnimplementedCToSServer() {}
+func (UnimplementedIncrementServer) mustEmbedUnimplementedIncrementServer() {}
 
-// UnsafeCToSServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to CToSServer will
+// UnsafeIncrementServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to IncrementServer will
 // result in compilation errors.
-type UnsafeCToSServer interface {
-	mustEmbedUnimplementedCToSServer()
+type UnsafeIncrementServer interface {
+	mustEmbedUnimplementedIncrementServer()
 }
 
-func RegisterCToSServer(s grpc.ServiceRegistrar, srv CToSServer) {
-	s.RegisterService(&CToS_ServiceDesc, srv)
+func RegisterIncrementServer(s grpc.ServiceRegistrar, srv IncrementServer) {
+	s.RegisterService(&Increment_ServiceDesc, srv)
 }
 
-func _CToS_AskServer_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CRequest)
+func _Increment_Inc_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Number)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CToSServer).AskServer(ctx, in)
+		return srv.(IncrementServer).Inc(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/totem_test.CToS/AskServer",
+		FullMethod: "/totem_test.Increment/Inc",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CToSServer).AskServer(ctx, req.(*CRequest))
+		return srv.(IncrementServer).Inc(ctx, req.(*Number))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// CToS_ServiceDesc is the grpc.ServiceDesc for CToS service.
+// Increment_ServiceDesc is the grpc.ServiceDesc for Increment service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var CToS_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "totem_test.CToS",
-	HandlerType: (*CToSServer)(nil),
+var Increment_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "totem_test.Increment",
+	HandlerType: (*IncrementServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "AskServer",
-			Handler:    _CToS_AskServer_Handler,
+			MethodName: "Inc",
+			Handler:    _Increment_Inc_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "test/test.proto",
 }
 
-// SToCClient is the client API for SToC service.
+// DecrementClient is the client API for Decrement service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type SToCClient interface {
-	AskClient(ctx context.Context, in *SRequest, opts ...grpc.CallOption) (*CResponse, error)
+type DecrementClient interface {
+	Dec(ctx context.Context, in *Number, opts ...grpc.CallOption) (*Number, error)
 }
 
-type sToCClient struct {
+type decrementClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewSToCClient(cc grpc.ClientConnInterface) SToCClient {
-	return &sToCClient{cc}
+func NewDecrementClient(cc grpc.ClientConnInterface) DecrementClient {
+	return &decrementClient{cc}
 }
 
-func (c *sToCClient) AskClient(ctx context.Context, in *SRequest, opts ...grpc.CallOption) (*CResponse, error) {
-	out := new(CResponse)
-	err := c.cc.Invoke(ctx, "/totem_test.SToC/AskClient", in, out, opts...)
+func (c *decrementClient) Dec(ctx context.Context, in *Number, opts ...grpc.CallOption) (*Number, error) {
+	out := new(Number)
+	err := c.cc.Invoke(ctx, "/totem_test.Decrement/Dec", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// SToCServer is the server API for SToC service.
-// All implementations must embed UnimplementedSToCServer
+// DecrementServer is the server API for Decrement service.
+// All implementations must embed UnimplementedDecrementServer
 // for forward compatibility
-type SToCServer interface {
-	AskClient(context.Context, *SRequest) (*CResponse, error)
-	mustEmbedUnimplementedSToCServer()
+type DecrementServer interface {
+	Dec(context.Context, *Number) (*Number, error)
+	mustEmbedUnimplementedDecrementServer()
 }
 
-// UnimplementedSToCServer must be embedded to have forward compatible implementations.
-type UnimplementedSToCServer struct {
+// UnimplementedDecrementServer must be embedded to have forward compatible implementations.
+type UnimplementedDecrementServer struct {
 }
 
-func (UnimplementedSToCServer) AskClient(context.Context, *SRequest) (*CResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method AskClient not implemented")
+func (UnimplementedDecrementServer) Dec(context.Context, *Number) (*Number, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Dec not implemented")
 }
-func (UnimplementedSToCServer) mustEmbedUnimplementedSToCServer() {}
+func (UnimplementedDecrementServer) mustEmbedUnimplementedDecrementServer() {}
 
-// UnsafeSToCServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to SToCServer will
+// UnsafeDecrementServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to DecrementServer will
 // result in compilation errors.
-type UnsafeSToCServer interface {
-	mustEmbedUnimplementedSToCServer()
+type UnsafeDecrementServer interface {
+	mustEmbedUnimplementedDecrementServer()
 }
 
-func RegisterSToCServer(s grpc.ServiceRegistrar, srv SToCServer) {
-	s.RegisterService(&SToC_ServiceDesc, srv)
+func RegisterDecrementServer(s grpc.ServiceRegistrar, srv DecrementServer) {
+	s.RegisterService(&Decrement_ServiceDesc, srv)
 }
 
-func _SToC_AskClient_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(SRequest)
+func _Decrement_Dec_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Number)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(SToCServer).AskClient(ctx, in)
+		return srv.(DecrementServer).Dec(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/totem_test.SToC/AskClient",
+		FullMethod: "/totem_test.Decrement/Dec",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(SToCServer).AskClient(ctx, req.(*SRequest))
+		return srv.(DecrementServer).Dec(ctx, req.(*Number))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// SToC_ServiceDesc is the grpc.ServiceDesc for SToC service.
+// Decrement_ServiceDesc is the grpc.ServiceDesc for Decrement service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var SToC_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "totem_test.SToC",
-	HandlerType: (*SToCServer)(nil),
+var Decrement_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "totem_test.Decrement",
+	HandlerType: (*DecrementServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "AskClient",
-			Handler:    _SToC_AskClient_Handler,
+			MethodName: "Dec",
+			Handler:    _Decrement_Dec_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "test/test.proto",
 }
 
-// CalculatorClient is the client API for Calculator service.
+// HashClient is the client API for Hash service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type CalculatorClient interface {
-	Add(ctx context.Context, in *AddRequest, opts ...grpc.CallOption) (*AddResponse, error)
+type HashClient interface {
+	Hash(ctx context.Context, in *String, opts ...grpc.CallOption) (*String, error)
 }
 
-type calculatorClient struct {
+type hashClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewCalculatorClient(cc grpc.ClientConnInterface) CalculatorClient {
-	return &calculatorClient{cc}
+func NewHashClient(cc grpc.ClientConnInterface) HashClient {
+	return &hashClient{cc}
 }
 
-func (c *calculatorClient) Add(ctx context.Context, in *AddRequest, opts ...grpc.CallOption) (*AddResponse, error) {
-	out := new(AddResponse)
-	err := c.cc.Invoke(ctx, "/totem_test.Calculator/Add", in, out, opts...)
+func (c *hashClient) Hash(ctx context.Context, in *String, opts ...grpc.CallOption) (*String, error) {
+	out := new(String)
+	err := c.cc.Invoke(ctx, "/totem_test.Hash/Hash", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// CalculatorServer is the server API for Calculator service.
-// All implementations must embed UnimplementedCalculatorServer
+// HashServer is the server API for Hash service.
+// All implementations must embed UnimplementedHashServer
 // for forward compatibility
-type CalculatorServer interface {
-	Add(context.Context, *AddRequest) (*AddResponse, error)
-	mustEmbedUnimplementedCalculatorServer()
+type HashServer interface {
+	Hash(context.Context, *String) (*String, error)
+	mustEmbedUnimplementedHashServer()
 }
 
-// UnimplementedCalculatorServer must be embedded to have forward compatible implementations.
-type UnimplementedCalculatorServer struct {
+// UnimplementedHashServer must be embedded to have forward compatible implementations.
+type UnimplementedHashServer struct {
 }
 
-func (UnimplementedCalculatorServer) Add(context.Context, *AddRequest) (*AddResponse, error) {
+func (UnimplementedHashServer) Hash(context.Context, *String) (*String, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Hash not implemented")
+}
+func (UnimplementedHashServer) mustEmbedUnimplementedHashServer() {}
+
+// UnsafeHashServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to HashServer will
+// result in compilation errors.
+type UnsafeHashServer interface {
+	mustEmbedUnimplementedHashServer()
+}
+
+func RegisterHashServer(s grpc.ServiceRegistrar, srv HashServer) {
+	s.RegisterService(&Hash_ServiceDesc, srv)
+}
+
+func _Hash_Hash_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(String)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HashServer).Hash(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/totem_test.Hash/Hash",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HashServer).Hash(ctx, req.(*String))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Hash_ServiceDesc is the grpc.ServiceDesc for Hash service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Hash_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "totem_test.Hash",
+	HandlerType: (*HashServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Hash",
+			Handler:    _Hash_Hash_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "test/test.proto",
+}
+
+// AddSubClient is the client API for AddSub service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type AddSubClient interface {
+	Add(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error)
+	Sub(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error)
+}
+
+type addSubClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewAddSubClient(cc grpc.ClientConnInterface) AddSubClient {
+	return &addSubClient{cc}
+}
+
+func (c *addSubClient) Add(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error) {
+	out := new(Number)
+	err := c.cc.Invoke(ctx, "/totem_test.AddSub/Add", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *addSubClient) Sub(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error) {
+	out := new(Number)
+	err := c.cc.Invoke(ctx, "/totem_test.AddSub/Sub", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// AddSubServer is the server API for AddSub service.
+// All implementations must embed UnimplementedAddSubServer
+// for forward compatibility
+type AddSubServer interface {
+	Add(context.Context, *Operands) (*Number, error)
+	Sub(context.Context, *Operands) (*Number, error)
+	mustEmbedUnimplementedAddSubServer()
+}
+
+// UnimplementedAddSubServer must be embedded to have forward compatible implementations.
+type UnimplementedAddSubServer struct {
+}
+
+func (UnimplementedAddSubServer) Add(context.Context, *Operands) (*Number, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method Add not implemented")
 }
-func (UnimplementedCalculatorServer) mustEmbedUnimplementedCalculatorServer() {}
+func (UnimplementedAddSubServer) Sub(context.Context, *Operands) (*Number, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Sub not implemented")
+}
+func (UnimplementedAddSubServer) mustEmbedUnimplementedAddSubServer() {}
 
-// UnsafeCalculatorServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to CalculatorServer will
+// UnsafeAddSubServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to AddSubServer will
 // result in compilation errors.
-type UnsafeCalculatorServer interface {
-	mustEmbedUnimplementedCalculatorServer()
+type UnsafeAddSubServer interface {
+	mustEmbedUnimplementedAddSubServer()
 }
 
-func RegisterCalculatorServer(s grpc.ServiceRegistrar, srv CalculatorServer) {
-	s.RegisterService(&Calculator_ServiceDesc, srv)
+func RegisterAddSubServer(s grpc.ServiceRegistrar, srv AddSubServer) {
+	s.RegisterService(&AddSub_ServiceDesc, srv)
 }
 
-func _Calculator_Add_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(AddRequest)
+func _AddSub_Add_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Operands)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(CalculatorServer).Add(ctx, in)
+		return srv.(AddSubServer).Add(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/totem_test.Calculator/Add",
+		FullMethod: "/totem_test.AddSub/Add",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(CalculatorServer).Add(ctx, req.(*AddRequest))
+		return srv.(AddSubServer).Add(ctx, req.(*Operands))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// Calculator_ServiceDesc is the grpc.ServiceDesc for Calculator service.
+func _AddSub_Sub_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Operands)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(AddSubServer).Sub(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/totem_test.AddSub/Sub",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(AddSubServer).Sub(ctx, req.(*Operands))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// AddSub_ServiceDesc is the grpc.ServiceDesc for AddSub service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var Calculator_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "totem_test.Calculator",
-	HandlerType: (*CalculatorServer)(nil),
+var AddSub_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "totem_test.AddSub",
+	HandlerType: (*AddSubServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
 			MethodName: "Add",
-			Handler:    _Calculator_Add_Handler,
+			Handler:    _AddSub_Add_Handler,
+		},
+		{
+			MethodName: "Sub",
+			Handler:    _AddSub_Sub_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "test/test.proto",
+}
+
+// ErrorClient is the client API for Error service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type ErrorClient interface {
+	Error(ctx context.Context, in *ErrorRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type errorClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewErrorClient(cc grpc.ClientConnInterface) ErrorClient {
+	return &errorClient{cc}
+}
+
+func (c *errorClient) Error(ctx context.Context, in *ErrorRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/totem_test.Error/Error", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// ErrorServer is the server API for Error service.
+// All implementations must embed UnimplementedErrorServer
+// for forward compatibility
+type ErrorServer interface {
+	Error(context.Context, *ErrorRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedErrorServer()
+}
+
+// UnimplementedErrorServer must be embedded to have forward compatible implementations.
+type UnimplementedErrorServer struct {
+}
+
+func (UnimplementedErrorServer) Error(context.Context, *ErrorRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Error not implemented")
+}
+func (UnimplementedErrorServer) mustEmbedUnimplementedErrorServer() {}
+
+// UnsafeErrorServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to ErrorServer will
+// result in compilation errors.
+type UnsafeErrorServer interface {
+	mustEmbedUnimplementedErrorServer()
+}
+
+func RegisterErrorServer(s grpc.ServiceRegistrar, srv ErrorServer) {
+	s.RegisterService(&Error_ServiceDesc, srv)
+}
+
+func _Error_Error_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ErrorRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(ErrorServer).Error(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/totem_test.Error/Error",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(ErrorServer).Error(ctx, req.(*ErrorRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Error_ServiceDesc is the grpc.ServiceDesc for Error service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Error_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "totem_test.Error",
+	HandlerType: (*ErrorServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Error",
+			Handler:    _Error_Error_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

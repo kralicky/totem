@@ -16,10 +16,3 @@ type Stream interface {
 	Send(*RPC) error
 	Recv() (*RPC, error)
 }
-
-// stream is a type constraint for the Stream interface, used to enable comparison
-// operators for objects instantiated using type parameters.
-type stream interface {
-	comparable
-	Stream
-}

@@ -1,45 +1,47 @@
 syntax = "proto3";
 option go_package = "github.com/kralicky/totem_test";
 package totem_test;
+import "google/protobuf/empty.proto";
 import "github.com/kralicky/totem/totem.proto";
 
 service Test {
   rpc TestStream(stream totem.RPC) returns (stream totem.RPC);
 }
 
-service CToS {
-  rpc AskServer(CRequest) returns (SResponse);
+service Increment {
+  rpc Inc(Number) returns (Number);
 }
 
-service SToC {
-  rpc AskClient(SRequest) returns (CResponse);
+service Decrement {
+  rpc Dec(Number) returns (Number);
 }
 
-message CRequest {
-  string question = 1;
+service Hash {
+  rpc Hash(String) returns (String);
 }
 
-message SResponse {
-  string answer = 1;
+service AddSub {
+  rpc Add(Operands) returns (Number);
+  rpc Sub(Operands) returns (Number);
 }
 
-message SRequest {
-  string answer = 1;
+service Error {
+  rpc Error(ErrorRequest) returns (google.protobuf.Empty);
 }
 
-message CResponse {
-  string question = 1;
+message ErrorRequest {
+  bool ReturnError = 1;
 }
 
-service Calculator {
-  rpc Add(AddRequest) returns (AddResponse);
+message Number {
+  int64 Value = 1;
 }
 
-message AddRequest {
-  int32 lhs = 1;
-  int32 rhs = 2;
+message String {
+  string Str = 1;
 }
 
-message AddResponse {
-  int64 result = 1;
+message Operands {
+  int32 A = 1;
+  int32 B = 2;
 }
