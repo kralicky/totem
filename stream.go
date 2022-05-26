@@ -7,10 +7,8 @@ import (
 
 	"go.uber.org/atomic"
 	"golang.org/x/net/context"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/protobuf/proto"
 )
 
 type recvPayload struct {
@@ -63,12 +61,12 @@ type streamHandler struct {
 	sendLock    sync.Mutex
 	pendingRPCs map[uint64]chan *RPC
 	pendingLock sync.RWMutex
-	methods     map[string]serviceMethod
+	methods     map[string]MethodInvoker
 	receiver    *recvWrapper
 	kickOnce    sync.Once
 }
 
-func newStreamHandler(stream Stream, methods map[string]serviceMethod) *streamHandler {
+func newStreamHandler(stream Stream, methods map[string]MethodInvoker) *streamHandler {
 	return &streamHandler{
 		stream:      stream,
 		count:       atomic.NewUint64(0),
@@ -147,34 +145,21 @@ func (sh *streamHandler) Run() error {
 			// Received a request from the client
 			method := msg.GetMethod()
 			if m, ok := sh.methods[method]; ok {
-				// Found the method
-				if m.method.Handler == nil {
-					sh.ReplyErr(msg.Tag, status.Errorf(codes.Internal,
-						"method %s has no handler", method))
-					continue
-				}
 				// Found a handler, call it
 				req := msg.GetRequest()
-				df := func(v interface{}) error {
-					return proto.Unmarshal(req, v.(proto.Message))
-				}
 				if req == nil {
 					sh.ReplyErr(msg.Tag, status.Error(codes.InvalidArgument,
 						"request is nil"))
 					continue
 				}
 				go func() {
-					response, err :=
-						m.method.Handler(m.serviceImpl, addTotemToContext(ctx), df, nil)
+					response, err := m.Invoke(addTotemToContext(ctx), req)
 					if err != nil {
 						sh.ReplyErr(msg.Tag, err)
 						return
 					}
-					data, err := proto.Marshal(response.(proto.Message))
-					if err != nil {
-						panic(err)
-					}
-					sh.Reply(msg.Tag, data)
+
+					sh.Reply(msg.Tag, response)
 				}()
 			} else {
 				sh.ReplyErr(msg.Tag, status.Errorf(codes.Unimplemented,
@@ -210,49 +195,4 @@ func (sh *streamHandler) Run() error {
 		}
 	}
 	return streamErr
-}
-
-type clientConn struct {
-	handler *streamHandler
-}
-
-func (cc *clientConn) Invoke(
-	ctx context.Context,
-	method string,
-	args interface{},
-	reply interface{},
-	opts ...grpc.CallOption,
-) error {
-	req, err := proto.Marshal(args.(proto.Message))
-	if err != nil {
-		return err
-	}
-	future := cc.handler.Request(&RPC{
-		Method: method,
-		Content: &RPC_Request{
-			Request: req,
-		},
-	})
-	select {
-	case rpc := <-future:
-		resp := rpc.GetResponse()
-		if err := resp.GetError(); err != nil {
-			return errors.New(string(err))
-		}
-		if resp == nil {
-			return status.Error(codes.Internal, "response was nil")
-		}
-		return proto.Unmarshal(resp.GetResponse(), reply.(proto.Message))
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-func (cc *clientConn) NewStream(
-	ctx context.Context,
-	desc *grpc.StreamDesc,
-	method string,
-	opts ...grpc.CallOption,
-) (grpc.ClientStream, error) {
-	panic("stuck in limbo")
 }
