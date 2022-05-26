@@ -129,6 +129,8 @@ func (sh *streamHandler) Kick() {
 	})
 }
 
+// Run will start the stream handler and block until the stream is finished.
+// This function should only be called once.
 func (sh *streamHandler) Run() error {
 	var streamErr error
 	go sh.receiver.Run()

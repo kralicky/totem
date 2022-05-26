@@ -46,5 +46,7 @@ func (r *splicedStreamInvoker) Invoke(ctx context.Context, req []byte) ([]byte, 
 			return nil, fmt.Errorf("[spliced invoker] %s", string(resp.Error))
 		}
 		return resp.GetResponse(), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
 }

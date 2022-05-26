@@ -94,13 +94,18 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 		if len(condition) == 1 && condition[0] != nil {
 			<-condition[0]
 		}
+
+		handlers := map[*streamHandler]struct{}{}
 		for _, m := range r.methods {
 			if spliced, ok := m.(*splicedStreamInvoker); ok {
-				handler := spliced.handler
-				go func() {
-					ch <- fmt.Errorf("[spliced] %w", handler.Run())
-				}()
+				handlers[spliced.handler] = struct{}{}
 			}
+		}
+		for h := range handlers {
+			h := h
+			go func() {
+				ch <- fmt.Errorf("[spliced] %w", h.Run())
+			}()
 		}
 		ch <- cc.handler.Run()
 		r.lock.Unlock()
