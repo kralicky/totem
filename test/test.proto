@@ -1,8 +1,8 @@
 syntax = "proto3";
-option go_package = "github.com/kralicky/totem_test";
-package totem_test;
+option go_package = "github.com/kralicky/totem/test";
+package test;
 import "google/protobuf/empty.proto";
-import "github.com/kralicky/totem/totem.proto";
+import "../totem.proto";
 
 service Test {
   rpc TestStream(stream totem.RPC) returns (stream totem.RPC);

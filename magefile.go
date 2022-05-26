@@ -23,7 +23,7 @@ func Generate() error {
 		"examples/simple/example.proto",
 	} {
 		dir := filepath.Dir(proto)
-		protos, err := ragu.GenerateCode(proto, true)
+		protos, err := ragu.GenerateCode(proto)
 		if err != nil {
 			return err
 		}

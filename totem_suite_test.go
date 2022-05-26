@@ -26,6 +26,8 @@ func TestTotem(t *testing.T) {
 type testCase struct {
 	ServerHandler func(stream Test_TestStreamServer) error
 	ClientHandler func(stream Test_TestStreamClient) error
+
+	listener *bufconn.Listener
 }
 
 type testServer struct {
@@ -41,7 +43,8 @@ func (ts *testServer) TestStream(stream Test_TestStreamServer) error {
 }
 
 func (tc *testCase) Run() {
-	listener := bufconn.Listen(1024)
+	defer GinkgoRecover()
+	tc.listener = bufconn.Listen(1024)
 	srv := testServer{
 		testCase: tc,
 		wg:       sync.WaitGroup{},
@@ -51,13 +54,10 @@ func (tc *testCase) Run() {
 	RegisterTestServer(grpcServer, &srv)
 	go func() {
 		defer GinkgoRecover()
-		err := grpcServer.Serve(listener)
+		err := grpcServer.Serve(tc.listener)
 		Expect(err).NotTo(HaveOccurred())
 	}()
-	conn, _ := grpc.DialContext(context.Background(), "bufconn",
-		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return listener.Dial()
-		}), grpc.WithInsecure())
+	conn := tc.Dial()
 	defer conn.Close()
 	client := NewTestClient(conn)
 	stream, _ := client.TestStream(context.Background())
@@ -74,6 +74,14 @@ func (tc *testCase) Run() {
 		srv.wg.Wait()
 	}()
 	Eventually(done).Should(BeClosed())
+}
+
+func (tc *testCase) Dial() *grpc.ClientConn {
+	conn, _ := grpc.DialContext(context.Background(), "bufconn",
+		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
+			return tc.listener.Dial()
+		}), grpc.WithInsecure())
+	return conn
 }
 
 // test service implementations
