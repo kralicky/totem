@@ -1,17 +1,28 @@
 syntax = "proto3";
+import "google/rpc/status.proto";
+
 option go_package = "github.com/kralicky/totem";
 package totem;
 
 message RPC {
-  uint64 Tag = 1;
-  string Method = 2;
-  oneof Content {
-    bytes Request = 3;
-    Response Response = 4;
+  uint64 tag = 1;
+  string method = 2;
+  oneof content {
+    bytes request = 3;
+    Response response = 4;
   }
+  MD metadata = 5;
 }
 
 message Response {
-  bytes Response = 1;
-  bytes Error = 2;
+  bytes response = 1;
+  google.rpc.Status statusProto = 2;
+}
+
+message MD {
+  map<string, MDValues> data = 1;
+}
+
+message MDValues {
+  repeated string items = 1;
 }

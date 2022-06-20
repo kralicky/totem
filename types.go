@@ -1,6 +1,9 @@
 package totem
 
-import grpc "google.golang.org/grpc"
+import (
+	"golang.org/x/net/context"
+	grpc "google.golang.org/grpc"
+)
 
 type ServerStream interface {
 	Stream
@@ -15,4 +18,5 @@ type ClientStream interface {
 type Stream interface {
 	Send(*RPC) error
 	Recv() (*RPC, error)
+	Context() context.Context
 }

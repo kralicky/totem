@@ -4,12 +4,18 @@ import (
 	context "context"
 	"crypto/sha1"
 	"encoding/hex"
+	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/kralicky/totem"
 	"github.com/kralicky/totem/test"
 	. "github.com/onsi/ginkgo/v2"
-	. "github.com/onsi/gomega"
+)
+
+var (
+	timeout = time.Second * 10
 )
 
 var _ = Describe("Test", func() {
@@ -26,10 +32,18 @@ var _ = Describe("Test", func() {
 				result, err := decClient.Dec(context.Background(), &test.Number{
 					Value: 2,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(1)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 1 {
+					return fmt.Errorf("expected 1, got %d", result.Value)
+				}
 
-				Eventually(done).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 			ClientHandler: func(stream test.Test_TestStreamClient) error {
@@ -43,10 +57,18 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: 2,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(3)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 3 {
+					return fmt.Errorf("expected 3, got %d", result.Value)
+				}
 
-				Eventually(done).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 		}
@@ -66,10 +88,18 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: 10,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(11)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 11 {
+					return fmt.Errorf("expected 11, got %d", result.Value)
+				}
 
-				Eventually(done).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 			ClientHandler: func(stream test.Test_TestStreamClient) error {
@@ -83,10 +113,18 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: 5,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(6)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 6 {
+					return fmt.Errorf("expected 6, got %d", result.Value)
+				}
 
-				Eventually(done).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 		}
@@ -105,8 +143,12 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: 10,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(11)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 11 {
+					return fmt.Errorf("expected 11, got %d", result.Value)
+				}
 
 				return nil
 			},
@@ -120,10 +162,21 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: 5,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(6)))
+				if err != nil {
+					return err
+				}
+				if result.Value != 6 {
+					return fmt.Errorf("expected 6, got %d", result.Value)
+				}
 
-				Eventually(errC).Should(Receive(MatchError(io.EOF)))
+				select {
+				case err := <-errC:
+					if !errors.Is(err, io.EOF) {
+						return fmt.Errorf("expected EOF, got %v", err)
+					}
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 		}
@@ -146,11 +199,23 @@ var _ = Describe("Test", func() {
 				result, err := decClient.Dec(context.Background(), &test.Number{
 					Value: 0,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(-1)))
+				if err != nil {
+					return err
+				}
+				if result.Value != -1 {
+					return fmt.Errorf("expected -1, got %d", result.Value)
+				}
 
-				Eventually(done).Should(BeClosed())
-				Eventually(done2).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
+				select {
+				case <-done2:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 			ClientHandler: func(stream test.Test_TestStreamClient) error {
@@ -164,18 +229,30 @@ var _ = Describe("Test", func() {
 				result, err := incClient.Inc(context.Background(), &test.Number{
 					Value: -5,
 				})
-				Expect(err).NotTo(HaveOccurred())
-				Expect(result.Value).To(Equal(int64(-4)))
+				if err != nil {
+					return err
+				}
+				if result.Value != -4 {
+					return fmt.Errorf("expected -4, got %d", result.Value)
+				}
 
 				hashClient := test.NewHashClient(cc)
 				result2, err := hashClient.Hash(context.Background(), &test.String{
 					Str: "hello",
 				})
-				Expect(err).NotTo(HaveOccurred())
+				if err != nil {
+					return err
+				}
 				expectedHash := sha1.Sum([]byte("hello"))
-				Expect(result2.Str).To(Equal(hex.EncodeToString(expectedHash[:])))
+				if result2.Str != hex.EncodeToString(expectedHash[:]) {
+					return fmt.Errorf("expected %s, got %s", hex.EncodeToString(expectedHash[:]), result2.Str)
+				}
 
-				Eventually(done).Should(BeClosed())
+				select {
+				case <-done:
+				case <-time.After(timeout):
+					return errors.New("timeout")
+				}
 				return nil
 			},
 		}
@@ -187,67 +264,81 @@ var _ = Describe("Test", func() {
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
 				ts := totem.NewServer(stream)
 				incSrv := incrementServer{}
-				done := incSrv.LimitRequests(1)
 				test.RegisterIncrementServer(ts, &incSrv)
-				ts.Serve()
-				Eventually(done).Should(BeClosed())
-				return nil
-			},
-			ClientHandler: func(stream test.Test_TestStreamClient) error {
-				return nil
+				_, errC := ts.Serve()
+				return <-errC
 			},
 		}
 		s2 := testCase{
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
 				ts := totem.NewServer(stream)
 				decSrv := decrementServer{}
-				done := decSrv.LimitRequests(1)
 				test.RegisterDecrementServer(ts, &decSrv)
-				ts.Serve()
-				Eventually(done).Should(BeClosed())
-				return nil
-			},
-			ClientHandler: func(stream test.Test_TestStreamClient) error {
-				return nil
+				_, errC := ts.Serve()
+				return <-errC
 			},
 		}
+		wait := make(chan struct{})
+		done := make(chan struct{})
 		tc := testCase{
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				defer GinkgoRecover()
 				ts := totem.NewServer(stream)
 				hashSrv := hashServer{}
-				done := hashSrv.LimitRequests(1)
 				test.RegisterHashServer(ts, &hashSrv)
 
 				{
 					incSvcDesc, err := totem.LoadServiceDesc(&test.Increment_ServiceDesc)
-					Expect(err).NotTo(HaveOccurred())
-
+					if err != nil {
+						return err
+					}
 					s1Conn := s1.Dial()
 					s1Client := test.NewTestClient(s1Conn)
 					s1Stream, err := s1Client.TestStream(context.Background())
-					Expect(err).NotTo(HaveOccurred())
-
+					if err != nil {
+						return err
+					}
 					ts.Splice(s1Stream, incSvcDesc)
 				}
 				{
 					decSvcDesc, err := totem.LoadServiceDesc(&test.Decrement_ServiceDesc)
-					Expect(err).NotTo(HaveOccurred())
-
+					if err != nil {
+						return err
+					}
 					s2Conn := s2.Dial()
 					s2Client := test.NewTestClient(s2Conn)
 					s2Stream, err := s2Client.TestStream(context.Background())
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						return err
+					}
 
 					ts.Splice(s2Stream, decSvcDesc)
 				}
 
-				ts.Serve()
-				Eventually(done).Should(BeClosed())
-				return nil
+				close(wait)
+				_, errC := ts.Serve()
+				select {
+				case <-done:
+					return nil
+				case err := <-errC:
+					return err
+				}
 			},
 			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				<-wait
 				ts := totem.NewServer(stream)
-				cc, _ := ts.Serve()
+				cc, errC := ts.Serve()
+
+				go func() {
+					ok := <-errC
+					if ok != nil && ok != io.EOF {
+						panic(ok)
+					}
+					if err := <-errC; err != nil {
+						panic(err)
+					}
+				}()
+
 				hashClient := test.NewHashClient(cc)
 				incClient := test.NewIncrementClient(cc)
 				decClient := test.NewDecrementClient(cc)
@@ -256,30 +347,43 @@ var _ = Describe("Test", func() {
 					result, err := hashClient.Hash(context.Background(), &test.String{
 						Str: "hello",
 					})
-					Expect(err).NotTo(HaveOccurred())
+					if err != nil {
+						return err
+					}
 					expectedHash := sha1.Sum([]byte("hello"))
-					Expect(result.Str).To(Equal(hex.EncodeToString(expectedHash[:])))
+					if result.Str != hex.EncodeToString(expectedHash[:]) {
+						return fmt.Errorf("unexpected hash result: %s", result.Str)
+					}
 				}
 				{
 					result, err := decClient.Dec(context.Background(), &test.Number{
 						Value: 0,
 					})
-					Expect(err).NotTo(HaveOccurred())
-					Expect(result.Value).To(Equal(int64(-1)))
+					if err != nil {
+						return err
+					}
+					if result.Value != -1 {
+						return fmt.Errorf("expected -1, got %d", result.Value)
+					}
 				}
 				{
 					result, err := incClient.Inc(context.Background(), &test.Number{
 						Value: 5,
 					})
-					Expect(err).NotTo(HaveOccurred())
-					Expect(result.Value).To(Equal(int64(6)))
+					if err != nil {
+						return err
+					}
+					if result.Value != 6 {
+						return fmt.Errorf("expected 6, got %d", result.Value)
+					}
 				}
 
+				close(done)
 				return nil
 			},
 		}
-		go s1.Run()
-		go s2.Run()
+		go s1.RunServerOnly()
+		go s2.RunServerOnly()
 		tc.Run()
 	})
 })

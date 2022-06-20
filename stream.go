@@ -1,59 +1,16 @@
 package totem
 
 import (
-	"errors"
 	"fmt"
 	"sync"
 
 	"go.uber.org/atomic"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/protobuf/proto"
+
 	"google.golang.org/grpc/status"
 )
-
-type recvPayload struct {
-	RPC *RPC
-	Err error
-}
-
-type recvWrapper struct {
-	stream Stream
-	c      chan recvPayload
-	kick   chan struct{}
-}
-
-func (w *recvWrapper) Run() {
-	for {
-		rpc, err := w.stream.Recv()
-		w.c <- recvPayload{
-			RPC: rpc,
-			Err: err,
-		}
-		if err != nil {
-			return
-		}
-	}
-}
-
-var ErrStreamClosed = errors.New("stream closed")
-var ErrKicked = errors.New("kicked")
-
-func (w *recvWrapper) Recv() (*RPC, error) {
-	select {
-	case payload := <-w.c:
-		return payload.RPC, payload.Err
-	case <-w.kick:
-		return nil, ErrKicked
-	}
-}
-
-func newRecvWrapper(stream Stream) *recvWrapper {
-	return &recvWrapper{
-		stream: stream,
-		c:      make(chan recvPayload, 256),
-		kick:   make(chan struct{}),
-	}
-}
 
 type streamHandler struct {
 	stream      Stream
@@ -66,14 +23,18 @@ type streamHandler struct {
 	kickOnce    sync.Once
 }
 
+// NewStreamHandler creates a new stream handler for the given stream and
+// method set.
+// There can be at most one stream handler per stream.
 func newStreamHandler(stream Stream, methods map[string]MethodInvoker) *streamHandler {
-	return &streamHandler{
+	sh := &streamHandler{
 		stream:      stream,
 		count:       atomic.NewUint64(0),
 		pendingRPCs: map[uint64]chan *RPC{},
 		methods:     methods,
 		receiver:    newRecvWrapper(stream),
 	}
+	return sh
 }
 
 func (sh *streamHandler) Request(m *RPC) <-chan *RPC {
@@ -100,7 +61,8 @@ func (sh *streamHandler) Reply(tag uint64, data []byte) {
 		Tag: tag,
 		Content: &RPC_Response{
 			Response: &Response{
-				Response: data,
+				Response:    data,
+				StatusProto: status.New(codes.OK, "").Proto(),
 			},
 		},
 	}); err != nil {
@@ -111,11 +73,13 @@ func (sh *streamHandler) Reply(tag uint64, data []byte) {
 func (sh *streamHandler) ReplyErr(tag uint64, err error) {
 	sh.sendLock.Lock()
 	defer sh.sendLock.Unlock()
+	stat, _ := status.FromError(err)
 	if err := sh.stream.Send(&RPC{
 		Tag: tag,
 		Content: &RPC_Response{
 			Response: &Response{
-				Error: []byte(err.Error()),
+				Response:    nil,
+				StatusProto: stat.Proto(),
 			},
 		},
 	}); err != nil {
@@ -131,11 +95,11 @@ func (sh *streamHandler) Kick() {
 
 // Run will start the stream handler and block until the stream is finished.
 // This function should only be called once.
-func (sh *streamHandler) Run() error {
+func (sh *streamHandler) Run(ctx context.Context) error {
 	var streamErr error
-	go sh.receiver.Run()
-	ctx, ca := context.WithCancel(context.Background())
-	defer ca()
+	sh.receiver.Start()
+	ctx, span := Tracer().Start(ctx, "StreamHandler.Run")
+	defer span.End()
 	for {
 		msg, err := sh.receiver.Recv()
 		if err != nil {
@@ -148,36 +112,30 @@ func (sh *streamHandler) Run() error {
 			method := msg.GetMethod()
 			if m, ok := sh.methods[method]; ok {
 				// Found a handler, call it
-				req := msg.GetRequest()
-				if req == nil {
-					sh.ReplyErr(msg.Tag, status.Error(codes.InvalidArgument,
-						"request is nil"))
-					continue
-				}
-				go func() {
-					response, err := m.Invoke(addTotemToContext(ctx), req)
+				go func(msg *RPC) {
+					// very important to clone the message here, otherwise the tag
+					// will be overwritten, and we need to preserve it to reply to
+					// the original request
+					response, err := m.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
 					if err != nil {
 						sh.ReplyErr(msg.Tag, err)
 						return
 					}
-
 					sh.Reply(msg.Tag, response)
-				}()
+				}(msg)
 			} else {
 				sh.ReplyErr(msg.Tag, status.Errorf(codes.Unimplemented,
 					"method %s not implemented", method))
 			}
 		case *RPC_Response:
 			// Received a response from the server
-			sh.pendingLock.RLock()
+			sh.pendingLock.Lock()
 			future, ok := sh.pendingRPCs[msg.Tag]
-			sh.pendingLock.RUnlock()
 			if !ok {
 				return status.Error(codes.Internal,
 					fmt.Sprintf("unexpected tag: %d", msg.Tag))
 			}
 			future <- msg
-			sh.pendingLock.Lock()
 			delete(sh.pendingRPCs, msg.Tag)
 			sh.pendingLock.Unlock()
 		default:
@@ -191,7 +149,7 @@ func (sh *streamHandler) Run() error {
 			Tag: tag,
 			Content: &RPC_Response{
 				Response: &Response{
-					Error: []byte(streamErr.Error()),
+					StatusProto: status.New(codes.Canceled, streamErr.Error()).Proto(),
 				},
 			},
 		}

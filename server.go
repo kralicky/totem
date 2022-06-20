@@ -1,11 +1,13 @@
 package totem
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"reflect"
 	"sync"
 
+	"go.opentelemetry.io/otel/codes"
 	"google.golang.org/grpc"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
@@ -15,6 +17,7 @@ type Server struct {
 	methods  map[string]MethodInvoker
 	services map[string]*grpc.ServiceDesc
 	stream   Stream
+	sctx     context.Context
 }
 
 func NewServer(stream Stream) *Server {
@@ -88,27 +91,46 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 	r.lock.Lock()
 	cc := &clientConn{
 		handler: newStreamHandler(r.stream, r.methods),
+		tracer:  Tracer(),
 	}
 	ch := make(chan error, 1)
+	ctx, ca := context.WithCancel(r.stream.Context())
+	ctx, span := cc.tracer.Start(ctx, "Serve")
+	r.sctx = ctx
 	go func() {
+		defer ca()
 		if len(condition) == 1 && condition[0] != nil {
+			_, waitSpan := cc.tracer.Start(ctx, "WaitForCondition")
 			<-condition[0]
+			waitSpan.End()
 		}
 
-		handlers := map[*streamHandler]struct{}{}
+		splicedHandlers := map[*streamHandler]struct{}{}
 		for _, m := range r.methods {
 			if spliced, ok := m.(*splicedStreamInvoker); ok {
-				handlers[spliced.handler] = struct{}{}
+				splicedHandlers[spliced.handler] = struct{}{}
 			}
 		}
-		for h := range handlers {
-			h := h
+		for sh := range splicedHandlers {
+			sh := sh
 			go func() {
-				ch <- fmt.Errorf("[spliced] %w", h.Run())
+				ch <- fmt.Errorf("[spliced] %w", sh.Run(ctx))
 			}()
 		}
-		ch <- cc.handler.Run()
+		runErr := cc.handler.Run(ctx)
+		if runErr != nil {
+			span.SetStatus(codes.Error, runErr.Error())
+		} else {
+			span.SetStatus(codes.Ok, "")
+		}
+		ch <- runErr
 		r.lock.Unlock()
+		span.End()
 	}()
 	return cc, ch
+}
+
+// Returns the server's stream context. Only valid after Serve has been called.
+func (r *Server) Context() context.Context {
+	return r.sctx
 }

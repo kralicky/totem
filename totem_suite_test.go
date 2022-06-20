@@ -7,18 +7,20 @@ import (
 	"net"
 	"sync"
 	"testing"
+	"time"
 
 	. "github.com/kralicky/totem/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"go.uber.org/atomic"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
-	"google.golang.org/grpc/test/bufconn"
 	"google.golang.org/protobuf/types/known/emptypb"
 )
 
 func TestTotem(t *testing.T) {
+	SetDefaultEventuallyTimeout(1 * time.Hour)
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Totem Suite")
 }
@@ -27,16 +29,20 @@ type testCase struct {
 	ServerHandler func(stream Test_TestStreamServer) error
 	ClientHandler func(stream Test_TestStreamClient) error
 
-	listener *bufconn.Listener
+	listener net.Listener
 }
 
 type testServer struct {
 	UnimplementedTestServer
 	testCase *testCase
 	wg       sync.WaitGroup
+	called   *atomic.Bool
 }
 
 func (ts *testServer) TestStream(stream Test_TestStreamServer) error {
+	if !ts.called.CAS(false, true) {
+		panic("TestStream called twice")
+	}
 	defer ts.wg.Done()
 	defer GinkgoRecover()
 	return ts.testCase.ServerHandler(stream)
@@ -44,8 +50,13 @@ func (ts *testServer) TestStream(stream Test_TestStreamServer) error {
 
 func (tc *testCase) Run() {
 	defer GinkgoRecover()
-	tc.listener = bufconn.Listen(1024)
+	var err error
+	tc.listener, err = net.Listen("tcp4", "localhost:0")
+	if err != nil {
+		panic(err)
+	}
 	srv := testServer{
+		called:   atomic.NewBool(false),
 		testCase: tc,
 		wg:       sync.WaitGroup{},
 	}
@@ -76,11 +87,29 @@ func (tc *testCase) Run() {
 	Eventually(done).Should(BeClosed())
 }
 
+func (tc *testCase) RunServerOnly() {
+	defer GinkgoRecover()
+	var err error
+	tc.listener, err = net.Listen("tcp4", "localhost:0")
+	if err != nil {
+		panic(err)
+	}
+	srv := testServer{
+		called:   atomic.NewBool(false),
+		testCase: tc,
+		wg:       sync.WaitGroup{},
+	}
+	srv.wg.Add(1)
+	grpcServer := grpc.NewServer()
+	RegisterTestServer(grpcServer, &srv)
+	grpcServer.Serve(tc.listener)
+}
+
 func (tc *testCase) Dial() *grpc.ClientConn {
-	conn, _ := grpc.DialContext(context.Background(), "bufconn",
-		grpc.WithContextDialer(func(ctx context.Context, addr string) (net.Conn, error) {
-			return tc.listener.Dial()
-		}), grpc.WithInsecure())
+	conn, err := grpc.DialContext(context.Background(), tc.listener.Addr().String(), grpc.WithInsecure())
+	if err != nil {
+		panic(err)
+	}
 	return conn
 }
 
@@ -100,11 +129,11 @@ func (l *requestLimiter) LimitRequests(n int) <-chan struct{} {
 }
 
 func (l *requestLimiter) Tick() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.done == nil {
 		return
 	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
 	l.remaining--
 	if l.remaining == 0 {
 		close(l.done)
