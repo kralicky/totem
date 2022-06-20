@@ -8,14 +8,13 @@ require (
 	github.com/magefile/mage v1.13.0
 	github.com/onsi/ginkgo/v2 v2.1.4
 	github.com/onsi/gomega v1.19.0
-	github.com/ttacon/chalk v0.0.0-20160626202418-22c06c80ed31
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.32.0
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.31.0
 	go.opentelemetry.io/otel v1.7.0
 	go.opentelemetry.io/otel/trace v1.7.0
 	go.uber.org/atomic v1.9.0
 	golang.org/x/net v0.0.0-20220524220425-1d687d428aca
 	google.golang.org/genproto v0.0.0-20220126215142-9970aeb2e350
-	google.golang.org/grpc v1.46.0
+	google.golang.org/grpc v1.45.0
 	google.golang.org/protobuf v1.28.0
 )
 
