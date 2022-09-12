@@ -25,6 +25,10 @@ service AddSub {
   rpc Sub(Operands) returns (Number);
 }
 
+service Multiply {
+  rpc Mul(Operands) returns (Number);
+}
+
 service Error {
   rpc Error(ErrorRequest) returns (google.protobuf.Empty);
 }

@@ -93,9 +93,17 @@ func newRecvWrapper(stream Stream) *recvWrapper {
 	st := &stacktrace{}
 	st.Load()
 	gKnownStreams[stream] = st
+
+	kick := make(chan struct{})
+	go func() {
+		<-kick
+		gStreamLock.Lock()
+		defer gStreamLock.Unlock()
+		delete(gKnownStreams, stream)
+	}()
 	return &recvWrapper{
 		stream: stream,
 		c:      make(chan recvPayload, 256),
-		kick:   make(chan struct{}),
+		kick:   kick,
 	}
 }

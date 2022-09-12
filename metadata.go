@@ -7,7 +7,7 @@ import (
 
 func (md *MD) ToMD() metadata.MD {
 	m := map[string][]string{}
-	for k, v := range md.Data {
+	for k, v := range md.GetData() {
 		m[k] = v.Items
 	}
 	return metadata.MD(m)

@@ -518,6 +518,92 @@ var AddSub_ServiceDesc = grpc.ServiceDesc{
 	Metadata: "test/test.proto",
 }
 
+// MultiplyClient is the client API for Multiply service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type MultiplyClient interface {
+	Mul(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error)
+}
+
+type multiplyClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewMultiplyClient(cc grpc.ClientConnInterface) MultiplyClient {
+	return &multiplyClient{cc}
+}
+
+func (c *multiplyClient) Mul(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error) {
+	out := new(Number)
+	err := c.cc.Invoke(ctx, "/test.Multiply/Mul", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// MultiplyServer is the server API for Multiply service.
+// All implementations must embed UnimplementedMultiplyServer
+// for forward compatibility
+type MultiplyServer interface {
+	Mul(context.Context, *Operands) (*Number, error)
+	mustEmbedUnimplementedMultiplyServer()
+}
+
+// UnimplementedMultiplyServer must be embedded to have forward compatible implementations.
+type UnimplementedMultiplyServer struct {
+}
+
+func (UnimplementedMultiplyServer) Mul(context.Context, *Operands) (*Number, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Mul not implemented")
+}
+func (UnimplementedMultiplyServer) mustEmbedUnimplementedMultiplyServer() {}
+
+// UnsafeMultiplyServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to MultiplyServer will
+// result in compilation errors.
+type UnsafeMultiplyServer interface {
+	mustEmbedUnimplementedMultiplyServer()
+}
+
+func RegisterMultiplyServer(s grpc.ServiceRegistrar, srv MultiplyServer) {
+	s.RegisterService(&Multiply_ServiceDesc, srv)
+}
+
+func _Multiply_Mul_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(Operands)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MultiplyServer).Mul(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/test.Multiply/Mul",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MultiplyServer).Mul(ctx, req.(*Operands))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Multiply_ServiceDesc is the grpc.ServiceDesc for Multiply service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Multiply_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Multiply",
+	HandlerType: (*MultiplyServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Mul",
+			Handler:    _Multiply_Mul_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "test/test.proto",
+}
+
 // ErrorClient is the client API for Error service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.

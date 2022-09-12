@@ -22,7 +22,10 @@ type exampleServer struct {
 func (e *exampleServer) Stream(stream Example_StreamServer) error {
 	// We will first create a totem server which will serve unary gRPC services
 	// on the stream.
-	totemServer := totem.NewServer(stream)
+	totemServer, err := totem.NewServer(stream)
+	if err != nil {
+		return err
+	}
 	// The server implements grpc.ServiceRegistrar, so we can register services
 	// to it the same way we would for a grpc server. The services registered to
 	// the server are the ones the server wants to serve using Totem over
@@ -94,7 +97,10 @@ func main() {
 
 	// This is the client side of the stream. Similar to the server code above,
 	// we create a totem server for the stream and register the Hello service to it.
-	totemServer := totem.NewServer(stream)
+	totemServer, err := totem.NewServer(stream)
+	if err != nil {
+		panic(err)
+	}
 	RegisterHelloServer(totemServer, &helloServer{})
 
 	// Call totem.Handle to take over the client end of the stream. Like above,
