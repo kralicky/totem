@@ -9,6 +9,7 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
@@ -56,9 +57,15 @@ type localServiceInvoker struct {
 	service     *grpc.ServiceDesc
 	methods     map[string]grpc.MethodDesc
 	logger      *zap.Logger
+	interceptor grpc.UnaryServerInterceptor
 }
 
-func newLocalServiceInvoker(serviceImpl interface{}, service *grpc.ServiceDesc, logger *zap.Logger) *localServiceInvoker {
+func newLocalServiceInvoker(
+	serviceImpl interface{},
+	service *grpc.ServiceDesc,
+	logger *zap.Logger,
+	interceptor grpc.UnaryServerInterceptor,
+) *localServiceInvoker {
 	handlers := make(map[string]grpc.MethodDesc)
 	for _, method := range service.Methods {
 		handlers[method.MethodName] = method
@@ -68,6 +75,7 @@ func newLocalServiceInvoker(serviceImpl interface{}, service *grpc.ServiceDesc, 
 		service:     service,
 		methods:     handlers,
 		logger:      logger,
+		interceptor: interceptor,
 	}
 }
 
@@ -78,15 +86,22 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		zap.Uint64("tag", req.GetTag()),
 	).Debug("invoking method using local service")
 
+	attrs := []attribute.KeyValue{attribute.String("func", "localServiceInvoker.Invoke")}
+
+	{
+		// md only introspected here for tracing purposes
+		md, _ := metadata.FromIncomingContext(ctx)
+		attrs = append(attrs, FromMD(md).KV()...)
+	}
+
 	ctx, span := Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
-		trace.WithAttributes(attribute.String("func", "localServiceInvoker.Invoke")),
-	)
+		trace.WithAttributes(attrs...))
 	defer span.End()
 
 	if m, ok := l.methods[req.MethodName]; ok {
 		resp, err := m.Handler(l.serviceImpl, addTotemToContext(ctx), func(v any) error {
 			return proto.Unmarshal(req.GetRequest(), v.(proto.Message))
-		}, nil)
+		}, l.interceptor)
 		if err != nil {
 			recordError(span, err)
 			return nil, err
@@ -119,12 +134,19 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 		zap.Uint64("tag", req.GetTag()),
 	).Debug("invoking method using stream controller")
 
+	// convert the incoming context to an outgoing context
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		ctx = metadata.NewOutgoingContext(ctx, md)
+	}
+
+	attrs := []attribute.KeyValue{
+		attribute.String("func", "streamControllerInvoker.Invoke"),
+		attribute.String("name", r.controller.name),
+	}
+	attrs = append(attrs, FromMD(md).KV()...)
 	ctx, span := Tracer().Start(ctx, "Invoke/Stream: "+req.QualifiedMethodName(),
-		trace.WithAttributes(
-			attribute.String("func", "streamControllerInvoker.Invoke"),
-			attribute.String("name", r.controller.name),
-		),
-	)
+		trace.WithAttributes(attrs...))
 	defer span.End()
 
 	rc := r.controller.Request(ctx, req)

@@ -27,7 +27,8 @@ type Server struct {
 }
 
 type ServerOptions struct {
-	name string
+	name        string
+	interceptor grpc.UnaryServerInterceptor
 }
 
 type ServerOption func(*ServerOptions)
@@ -41,6 +42,12 @@ func (o *ServerOptions) apply(opts ...ServerOption) {
 func WithName(name string) ServerOption {
 	return func(o *ServerOptions) {
 		o.name = name
+	}
+}
+
+func WithUnaryServerInterceptor(interceptor grpc.UnaryServerInterceptor) ServerOption {
+	return func(o *ServerOptions) {
+		o.interceptor = interceptor
 	}
 }
 
@@ -88,7 +95,8 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	if err != nil {
 		panic(err)
 	}
-	handler.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc, newLocalServiceInvoker(r.controller, &ServerReflection_ServiceDesc, r.logger)))
+	handler.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc,
+		newLocalServiceInvoker(r.controller, &ServerReflection_ServiceDesc, r.logger, r.interceptor)))
 
 	go func() {
 		if err := handler.Run(stream.Context()); err != nil {
@@ -135,7 +143,8 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 		log.Fatalf("totem: failed to load service descriptor: %v", err)
 	}
 
-	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc, newLocalServiceInvoker(impl, serviceDesc, r.logger)))
+	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc,
+		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptor)))
 }
 
 // Serve starts the totem server, which takes control of the stream and begins
