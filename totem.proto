@@ -1,17 +1,24 @@
 syntax = "proto3";
 import "google/rpc/status.proto";
+import "google/protobuf/empty.proto";
+import "google/protobuf/descriptor.proto";
 
 option go_package = "github.com/kralicky/totem";
 package totem;
 
+service ServerReflection {
+  rpc ListServices(DiscoveryRequest) returns (ServiceInfo);
+}
+
 message RPC {
   uint64 tag = 1;
-  string method = 2;
+  string serviceName = 2;
+  string methodName = 3;
   oneof content {
-    bytes request = 3;
-    Response response = 4;
+    bytes request = 4;
+    Response response = 5;
   }
-  MD metadata = 5;
+  MD metadata = 6;
 }
 
 message Response {
@@ -25,4 +32,14 @@ message MD {
 
 message MDValues {
   repeated string items = 1;
+}
+
+message DiscoveryRequest {
+  string initiator = 1;
+  repeated string visited = 2;
+  int32 remainingHops = 3;
+}
+
+message ServiceInfo {
+  repeated google.protobuf.ServiceDescriptorProto services = 1;
 }

@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
+	"go.uber.org/zap"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
@@ -12,9 +14,10 @@ import (
 )
 
 type clientConn struct {
-	handler     *streamHandler
+	controller  *streamController
 	interceptor grpc.UnaryClientInterceptor
 	tracer      trace.Tracer
+	logger      *zap.Logger
 }
 
 func (cc *clientConn) Invoke(
@@ -28,8 +31,21 @@ func (cc *clientConn) Invoke(
 	if err != nil {
 		return err
 	}
+
+	cc.logger.With(
+		zap.String("method", method),
+		zap.String("requestType", fmt.Sprintf("%T", req)),
+		zap.String("replyType", fmt.Sprintf("%T", reply)),
+	).Debug("invoking method")
+
+	serviceName, methodName, err := parseQualifiedMethod(method)
+	if err != nil {
+		return err
+	}
+
 	rpc := &RPC{
-		Method: method,
+		ServiceName: serviceName,
+		MethodName:  methodName,
 		Content: &RPC_Request{
 			Request: reqMsg,
 		},
@@ -41,6 +57,7 @@ func (cc *clientConn) Invoke(
 	}
 
 	name, attr := spanInfo(method, peerFromCtx(ctx))
+	attr = append(attr, attribute.String("func", "clientConn.Invoke"))
 	ctx, span := cc.tracer.Start(ctx, name,
 		trace.WithSpanKind(trace.SpanKindClient),
 		trace.WithAttributes(attr...),
@@ -49,15 +66,25 @@ func (cc *clientConn) Invoke(
 	otelgrpc.Inject(ctx, &md)
 	rpc.Metadata = FromMD(md)
 
-	future := cc.handler.Request(rpc)
+	future := cc.controller.Request(ctx, rpc)
 	select {
 	case rpc := <-future:
 		resp := rpc.GetResponse()
 		stat := resp.GetStatus()
 		if err := stat.Err(); err != nil {
+			cc.logger.With(
+				zap.Uint64("tag", rpc.Tag),
+				zap.String("method", method),
+				zap.Error(err),
+			).Warn("received reply with error")
 			recordErrorStatus(span, stat)
 			return err
 		}
+
+		cc.logger.With(
+			zap.Uint64("tag", rpc.Tag),
+			zap.String("method", method),
+		).Debug("received reply")
 		recordSuccess(span)
 
 		for _, callOpt := range callOpts {
@@ -69,6 +96,12 @@ func (cc *clientConn) Invoke(
 			}
 		}
 		if err := proto.Unmarshal(resp.GetResponse(), reply.(proto.Message)); err != nil {
+			cc.logger.With(
+				zap.Uint64("tag", rpc.Tag),
+				zap.String("method", method),
+				zap.Error(err),
+			).Error("received malformed response message")
+
 			return fmt.Errorf("[totem] malformed response: %w", err)
 		}
 		return nil
