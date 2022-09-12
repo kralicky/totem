@@ -14,10 +14,9 @@ import (
 )
 
 type clientConn struct {
-	controller  *streamController
-	interceptor grpc.UnaryClientInterceptor
-	tracer      trace.Tracer
-	logger      *zap.Logger
+	controller *streamController
+	tracer     trace.Tracer
+	logger     *zap.Logger
 }
 
 func (cc *clientConn) Invoke(

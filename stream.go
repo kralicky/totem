@@ -87,7 +87,7 @@ func newStreamController(stream Stream, options ...StreamControllerOption) *stre
 	if err != nil {
 		panic(err)
 	}
-	sh.RegisterServiceHandler(NewDefaultServiceHandler(desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger)))
+	sh.RegisterServiceHandler(NewDefaultServiceHandler(desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil)))
 	sh.RegisterServiceHandler(NewDefaultServiceHandler(desc, newStreamControllerInvoker(sh, sh.logger)))
 	return sh
 }
@@ -110,7 +110,10 @@ func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 		zap.String("type", fmt.Sprintf("%T", m.GetContent())),
 	).Debug("request")
 
-	md := make(metadata.MD)
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		md = metadata.New(nil)
+	}
 	otelgrpc.Inject(ctx, &md)
 
 	m.Metadata = FromMD(md)
@@ -136,7 +139,10 @@ func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) 
 		zap.Uint64("tag", tag),
 	).Debug("reply (success)")
 
-	md := make(metadata.MD)
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		md = metadata.New(nil)
+	}
 	otelgrpc.Inject(ctx, &md)
 
 	sh.sendLock.Lock()
@@ -161,7 +167,10 @@ func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error)
 		zap.Error(err),
 	).Debug("reply")
 
-	md := make(metadata.MD)
+	md, ok := metadata.FromOutgoingContext(ctx)
+	if !ok {
+		md = metadata.New(nil)
+	}
 	otelgrpc.Inject(ctx, &md)
 
 	sh.sendLock.Lock()
@@ -194,6 +203,13 @@ func (sh *streamController) Run(ctx context.Context) error {
 	sh.receiver.Start()
 	sh.logger.Debug("stream controller running")
 	defer sh.logger.Debug("stream controller stopped")
+
+	streamMetadata, hasStreamMetadata := metadata.FromIncomingContext(ctx)
+	if hasStreamMetadata {
+		// delete the traceparent header from stream metadata to avoid parenting
+		// individual RPC traces to the stream trace
+		streamMetadata.Delete("traceparent")
+	}
 	for {
 		msg, err := sh.receiver.Recv()
 		if err != nil {
@@ -201,8 +217,14 @@ func (sh *streamController) Run(ctx context.Context) error {
 			break
 		}
 		md := msg.Metadata.ToMD()
+		if hasStreamMetadata {
+			md = metadata.Join(streamMetadata, md)
+		}
+		ctx := metadata.NewIncomingContext(ctx, md)
+
 		b, sctx := otelgrpc.Extract(ctx, &md)
-		ctx := trace.ContextWithRemoteSpanContext(baggage.ContextWithBaggage(ctx, b), sctx)
+		ctx = trace.ContextWithSpanContext(baggage.ContextWithBaggage(ctx, b), sctx)
+		msg.Metadata = nil
 
 		switch msg.Content.(type) {
 		case *RPC_Request:
