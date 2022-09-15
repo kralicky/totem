@@ -8,6 +8,7 @@ import (
 
 	"github.com/jhump/protoreflect/grpcreflect"
 	"google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -27,7 +28,7 @@ func LoadServiceDesc(svc *grpc.ServiceDesc) (*descriptorpb.ServiceDescriptorProt
 	if err != nil {
 		return nil, err
 	}
-	dpb := desc.AsServiceDescriptorProto()
+	dpb := proto.Clone(desc.AsServiceDescriptorProto()).(*descriptorpb.ServiceDescriptorProto)
 	fqn := desc.GetFullyQualifiedName()
 	dpb.Name = &fqn
 	return dpb, nil

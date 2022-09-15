@@ -87,8 +87,10 @@ func newStreamController(stream Stream, options ...StreamControllerOption) *stre
 	if err != nil {
 		panic(err)
 	}
-	sh.RegisterServiceHandler(NewDefaultServiceHandler(desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil)))
-	sh.RegisterServiceHandler(NewDefaultServiceHandler(desc, newStreamControllerInvoker(sh, sh.logger)))
+	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
+		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil)))
+	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
+		desc, newStreamControllerInvoker(sh, sh.logger)))
 	return sh
 }
 
@@ -103,12 +105,13 @@ func (sh *streamController) RegisterServiceHandler(handler *ServiceHandler) {
 }
 
 func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
-	sh.logger.With(
+	lg := sh.logger.With(
 		zap.Uint64("tag", m.GetTag()),
 		zap.String("service", m.GetServiceName()),
 		zap.String("method", m.GetMethodName()),
 		zap.String("type", fmt.Sprintf("%T", m.GetContent())),
-	).Debug("request")
+	)
+	lg.Debug("request")
 
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
@@ -129,15 +132,17 @@ func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	sh.sendLock.Lock()
 	defer sh.sendLock.Unlock()
 	if err := sh.stream.Send(m); err != nil {
+		lg.With(zap.Error(err)).Warn("stream error; kicking")
 		sh.Kick()
 	}
 	return ch
 }
 
 func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) {
-	sh.logger.With(
+	lg := sh.logger.With(
 		zap.Uint64("tag", tag),
-	).Debug("reply (success)")
+	)
+	lg.Debug("reply (success)")
 
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
@@ -157,15 +162,17 @@ func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) 
 		},
 		Metadata: FromMD(md),
 	}); err != nil {
+		lg.With(zap.Error(err)).Warn("stream error; kicking")
 		sh.Kick()
 	}
 }
 
 func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error) {
-	sh.logger.With(
+	lg := sh.logger.With(
 		zap.Uint64("tag", tag),
 		zap.Error(err),
-	).Debug("reply")
+	)
+	lg.Debug("reply")
 
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
@@ -186,6 +193,7 @@ func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error)
 		},
 		Metadata: FromMD(md),
 	}); err != nil {
+		lg.With(zap.Error(err)).Warn("stream error; kicking")
 		sh.Kick()
 	}
 }
@@ -239,34 +247,36 @@ func (sh *streamController) Run(ctx context.Context) error {
 				defer span.End()
 				// Received a request from the client
 				svcName := msg.GetServiceName()
-				if handlers, ok := sh.services.Load(svcName); ok {
-					handler := handlers.First()
-					method := msg.GetMethodName()
-					if invoker, ok := handler.MethodInvokers[method]; ok {
-						// Found a handler, call it
-						// very important to clone the message here, otherwise the tag
-						// will be overwritten, and we need to preserve it to reply to
-						// the original request
-						response, err := invoker.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
-						if err != nil {
-							span.SetStatus(otelcodes.Error, err.Error())
-							sh.ReplyErr(ctx, msg.Tag, err)
-							return
+				if handlers, ok := sh.services.Load(svcName); ok && handlers.Len() > 0 {
+					if handler := handlers.First(); handler != nil {
+						method := msg.GetMethodName()
+						if invoker, ok := handler.MethodInvokers[method]; ok {
+							// Found a handler, call it
+							// very important to clone the message here, otherwise the tag
+							// will be overwritten, and we need to preserve it to reply to
+							// the original request
+							response, err := invoker.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
+							if err != nil {
+								span.SetStatus(otelcodes.Error, err.Error())
+								sh.ReplyErr(ctx, msg.Tag, err)
+								return
+							}
+							span.SetStatus(otelcodes.Ok, "")
+							sh.Reply(ctx, msg.Tag, response)
+						} else {
+							span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found", method))
+							sh.ReplyErr(ctx, msg.Tag, status.Errorf(codes.NotFound, "method %q not found", method))
 						}
-						span.SetStatus(otelcodes.Ok, "")
-						sh.Reply(ctx, msg.Tag, response)
-					} else {
-						span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found", method))
-						sh.ReplyErr(ctx, msg.Tag, status.Errorf(codes.NotFound, "method %q not found", method))
+						return
 					}
-				} else {
-					// No handler found
-					sh.logger.With(
-						zap.String("service", svcName),
-					).Debug("unknown service")
-					span.SetStatus(otelcodes.Error, "unknown service "+svcName)
-					sh.ReplyErr(ctx, msg.Tag, status.Error(codes.Unimplemented, "unknown service "+svcName))
 				}
+
+				// No handler found
+				sh.logger.With(
+					zap.String("service", svcName),
+				).Debug("unknown service")
+				span.SetStatus(otelcodes.Error, "unknown service "+svcName)
+				sh.ReplyErr(ctx, msg.Tag, status.Error(codes.Unimplemented, "unknown service "+svcName))
 			}()
 		case *RPC_Response:
 			sh.logger.Debug("stream received RPC_Response")
