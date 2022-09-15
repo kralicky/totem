@@ -88,12 +88,6 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 
 	attrs := []attribute.KeyValue{attribute.String("func", "localServiceInvoker.Invoke")}
 
-	{
-		// md only introspected here for tracing purposes
-		md, _ := metadata.FromIncomingContext(ctx)
-		attrs = append(attrs, FromMD(md).KV()...)
-	}
-
 	ctx, span := Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
 		trace.WithAttributes(attrs...))
 	defer span.End()
@@ -144,7 +138,7 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 		attribute.String("func", "streamControllerInvoker.Invoke"),
 		attribute.String("name", r.controller.name),
 	}
-	attrs = append(attrs, FromMD(md).KV()...)
+
 	ctx, span := Tracer().Start(ctx, "Invoke/Stream: "+req.QualifiedMethodName(),
 		trace.WithAttributes(attrs...))
 	defer span.End()
