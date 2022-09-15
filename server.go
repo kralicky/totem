@@ -10,8 +10,10 @@ import (
 	"sync"
 
 	"go.opentelemetry.io/otel/attribute"
+	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
+	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -86,21 +88,29 @@ func (r *Server) RegisterService(desc *grpc.ServiceDesc, impl interface{}) {
 // Splice configures this server to forward any incoming RPCs for the given
 // service(s) to a different totem stream.
 func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
+	ctrlOptions := StreamControllerOptions{}
+	ctrlOptions.apply(opts...)
+	name := "spliced"
+	if ctrlOptions.name != "" {
+		name = "spliced-to:" + ctrlOptions.name
+	}
+	lg := r.logger.Named(name)
+
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	handler := newStreamController(stream, append(opts, WithLogger(r.logger.Named("spliced")))...)
+	ctrl := newStreamController(stream, WithLogger(lg))
 
 	reflectionDesc, err := LoadServiceDesc(&ServerReflection_ServiceDesc)
 	if err != nil {
 		panic(err)
 	}
-	handler.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc,
+	ctrl.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(), reflectionDesc,
 		newLocalServiceInvoker(r.controller, &ServerReflection_ServiceDesc, r.logger, r.interceptor)))
 
 	go func() {
-		if err := handler.Run(stream.Context()); err != nil {
-			log.Printf("totem: stream handler exited with error: %v", err)
+		if err := ctrl.Run(stream.Context()); err != nil {
+			lg.With(zap.Error(err)).Warn("stream handler exited with error")
 		}
 	}()
 
@@ -109,25 +119,36 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 			attribute.String("name", r.name),
 		),
 	)
-	info, err := discoverServices(ctx, handler)
-	span.End()
-
+	info, err := discoverServices(ctx, ctrl)
 	if err != nil {
-		return fmt.Errorf("service discovery failed: %w", err)
+		err := fmt.Errorf("service discovery failed: %w", err)
+		span.RecordError(err)
+		span.SetStatus(otelcodes.Error, err.Error())
+		return err
 	}
+	span.End()
 	r.logger.With(
 		zap.Any("methods", info.MethodNames()),
 	).Debug("splicing stream")
 
-	handlerInvoker := handler.NewInvoker()
+	handlerInvoker := ctrl.NewInvoker()
 	for _, desc := range info.Services {
-		r.controller.RegisterServiceHandler(NewDefaultServiceHandler(desc, handlerInvoker))
+		r.controller.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(), desc, handlerInvoker))
 	}
 
 	// these are tracked so that when the server starts and runs discovery for
 	// the main controller, discovered service handlers can be replicated to
 	// spliced clients
-	r.splicedControllers = append(r.splicedControllers, handler)
+	r.splicedControllers = append(r.splicedControllers, ctrl)
+
+	go func() {
+		<-stream.Context().Done()
+		r.lock.Lock()
+		defer r.lock.Unlock()
+		if i := slices.Index(r.splicedControllers, ctrl); i != -1 {
+			r.splicedControllers = slices.Delete(r.splicedControllers, i, i+1)
+		}
+	}()
 	return nil
 }
 
@@ -143,7 +164,7 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 		log.Fatalf("totem: failed to load service descriptor: %v", err)
 	}
 
-	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(reflectionDesc,
+	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), reflectionDesc,
 		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptor)))
 }
 
@@ -195,9 +216,9 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 
 	invoker := r.controller.NewInvoker()
 	for _, svcDesc := range info.Services {
-		r.controller.RegisterServiceHandler(NewDefaultServiceHandler(svcDesc, invoker))
+		r.controller.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), svcDesc, invoker))
 		for _, ctrl := range r.splicedControllers {
-			ctrl.RegisterServiceHandler(NewDefaultServiceHandler(svcDesc, invoker))
+			ctrl.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), svcDesc, invoker))
 		}
 	}
 

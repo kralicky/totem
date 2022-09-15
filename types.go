@@ -26,14 +26,24 @@ type Stream interface {
 }
 
 type ServiceHandler struct {
-	Descriptor     *descriptorpb.ServiceDescriptorProto
-	MethodInvokers map[string]MethodInvoker
+	controllerContext context.Context
+	Descriptor        *descriptorpb.ServiceDescriptorProto
+	MethodInvokers    map[string]MethodInvoker
 }
 
-func NewDefaultServiceHandler(descriptor *descriptorpb.ServiceDescriptorProto, invoker MethodInvoker) *ServiceHandler {
+func (s *ServiceHandler) Done() <-chan struct{} {
+	return s.controllerContext.Done()
+}
+
+func NewDefaultServiceHandler(
+	ctx context.Context,
+	descriptor *descriptorpb.ServiceDescriptorProto,
+	invoker MethodInvoker,
+) *ServiceHandler {
 	sh := &ServiceHandler{
-		Descriptor:     descriptor,
-		MethodInvokers: make(map[string]MethodInvoker),
+		controllerContext: ctx,
+		Descriptor:        descriptor,
+		MethodInvokers:    make(map[string]MethodInvoker),
 	}
 	for _, method := range descriptor.Method {
 		sh.MethodInvokers[method.GetName()] = invoker
@@ -50,6 +60,15 @@ func (s *ServiceHandlerList) Append(sh *ServiceHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.data = append(s.data, sh)
+
+	go func() {
+		<-sh.Done()
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if i := slices.Index(s.data, sh); i != -1 {
+			s.data = slices.Delete(s.data, i, i+1)
+		}
+	}()
 }
 
 func (s *ServiceHandlerList) Range(fn func(sh *ServiceHandler) bool) {
@@ -63,6 +82,12 @@ func (s *ServiceHandlerList) Range(fn func(sh *ServiceHandler) bool) {
 	}
 }
 
+func (s *ServiceHandlerList) Len() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.data)
+}
+
 func (s *ServiceHandlerList) First() *ServiceHandler {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -70,8 +95,4 @@ func (s *ServiceHandlerList) First() *ServiceHandler {
 		return nil
 	}
 	return s.data[0]
-}
-
-type Splicer interface {
-	Splice(Stream) error
 }
