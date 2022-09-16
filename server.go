@@ -109,7 +109,13 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 
 	go func() {
 		if err := ctrl.Run(stream.Context()); err != nil {
-			lg.With(zap.Error(err)).Warn("stream handler exited with error")
+			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
+				r.logger.Debug("stream handler closed")
+			} else {
+				r.logger.With(
+					zap.Error(err),
+				).Warn("stream handler exited with error")
+			}
 		}
 	}()
 
