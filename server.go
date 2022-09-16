@@ -13,7 +13,6 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -141,14 +140,6 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	// spliced clients
 	r.splicedControllers = append(r.splicedControllers, ctrl)
 
-	go func() {
-		<-stream.Context().Done()
-		r.lock.Lock()
-		defer r.lock.Unlock()
-		if i := slices.Index(r.splicedControllers, ctrl); i != -1 {
-			r.splicedControllers = slices.Delete(r.splicedControllers, i, i+1)
-		}
-	}()
 	return nil
 }
 
@@ -178,9 +169,19 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-chan error) {
 	r.logger.Debug("starting totem server")
 	r.lock.RLock()
-	ch := make(chan error, 1)
+	ch := make(chan error, 2)
 
 	go func() {
+		defer func() {
+			r.lock.Lock()
+			defer r.lock.Unlock()
+			r.logger.With(
+				zap.Int("numControllers", len(r.splicedControllers)),
+			).Debug("kicking spliced controllers")
+			for _, spliced := range r.splicedControllers {
+				spliced.Kick()
+			}
+		}()
 		runErr := r.controller.Run(r.Context())
 		if runErr != nil {
 			if errors.Is(runErr, io.EOF) || status.Code(runErr) == codes.Canceled {
