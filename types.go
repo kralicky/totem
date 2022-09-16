@@ -3,6 +3,7 @@ package totem
 import (
 	"sync"
 
+	"github.com/golang/protobuf/proto"
 	"golang.org/x/exp/slices"
 	"golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
@@ -29,6 +30,7 @@ type ServiceHandler struct {
 	controllerContext context.Context
 	Descriptor        *descriptorpb.ServiceDescriptorProto
 	MethodInvokers    map[string]MethodInvoker
+	MethodQOS         map[string]*QOS
 }
 
 func (s *ServiceHandler) Done() <-chan struct{} {
@@ -46,6 +48,19 @@ func NewDefaultServiceHandler(
 		MethodInvokers:    make(map[string]MethodInvoker),
 	}
 	for _, method := range descriptor.Method {
+		if proto.HasExtension(method, E_Qos) {
+			value, err := proto.GetExtension(method, E_Qos)
+			if err != nil {
+				panic(err)
+			}
+			if qos, ok := value.(*QOS); ok {
+				if qos.ReplicationStrategy == ReplicationStrategy_Broadcast && method.GetOutputType() != ".google.protobuf.Empty" {
+					// todo: temporary restriction
+					panic("methods with Broadcast ReplicationStrategy must have a response type of google.protobuf.Empty")
+				}
+				sh.MethodQOS[method.GetName()] = qos
+			}
+		}
 		sh.MethodInvokers[method.GetName()] = invoker
 	}
 	return sh
@@ -59,6 +74,13 @@ type ServiceHandlerList struct {
 func (s *ServiceHandlerList) Append(sh *ServiceHandler) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	for _, existing := range s.data {
+		if !proto.Equal(existing.Descriptor, sh.Descriptor) {
+			panic("entries in ServiceHandlerLists must have the same service descriptors")
+		}
+	}
+
 	s.data = append(s.data, sh)
 
 	go func() {
@@ -71,15 +93,16 @@ func (s *ServiceHandlerList) Append(sh *ServiceHandler) {
 	}()
 }
 
-func (s *ServiceHandlerList) Range(fn func(sh *ServiceHandler) bool) {
+func (s *ServiceHandlerList) Range(fn func(sh *ServiceHandler) bool) bool {
 	s.mu.RLock()
 	data := slices.Clone(s.data)
 	s.mu.RUnlock()
 	for _, sh := range data {
 		if !fn(sh) {
-			return
+			return false
 		}
 	}
+	return true
 }
 
 func (s *ServiceHandlerList) Len() int {

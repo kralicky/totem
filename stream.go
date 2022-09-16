@@ -20,6 +20,7 @@ import (
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
 	descriptorpb "google.golang.org/protobuf/types/descriptorpb"
+	"google.golang.org/protobuf/types/known/emptypb"
 
 	"google.golang.org/grpc/status"
 )
@@ -204,6 +205,18 @@ func (sh *streamController) Kick() {
 	})
 }
 
+var (
+	emptyResponse []byte
+)
+
+func init() {
+	data, err := proto.Marshal(&emptypb.Empty{})
+	if err != nil {
+		panic(err)
+	}
+	emptyResponse = data
+}
+
 // Run will start the stream handler and block until the stream is finished.
 // This function should only be called once.
 func (sh *streamController) Run(ctx context.Context) error {
@@ -248,9 +261,37 @@ func (sh *streamController) Run(ctx context.Context) error {
 				// Received a request from the client
 				svcName := msg.GetServiceName()
 				if handlers, ok := sh.services.Load(svcName); ok && handlers.Len() > 0 {
-					if handler := handlers.First(); handler != nil {
+					if first := handlers.First(); first != nil {
 						method := msg.GetMethodName()
-						if invoker, ok := handler.MethodInvokers[method]; ok {
+						if handlers.Len() > 1 {
+							if qos, ok := first.MethodQOS[method]; ok {
+								switch qos.ReplicationStrategy {
+								case ReplicationStrategy_First:
+									// continue below
+								case ReplicationStrategy_Broadcast:
+									var err error
+									success := handlers.Range(func(sh *ServiceHandler) bool {
+										if invoker, ok := sh.MethodInvokers[method]; ok {
+											_, _ = invoker.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
+										} else {
+											span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found (broadcast)", method))
+											err = status.Errorf(codes.NotFound, "method %q not found (broadcast)", method)
+											return false
+										}
+										return true
+									})
+									if success {
+										span.SetStatus(otelcodes.Ok, "")
+										sh.Reply(ctx, msg.Tag, emptyResponse)
+									} else {
+										span.SetStatus(otelcodes.Error, err.Error())
+										sh.ReplyErr(ctx, msg.Tag, err)
+									}
+									return
+								}
+							}
+						}
+						if invoker, ok := first.MethodInvokers[method]; ok {
 							// Found a handler, call it
 							// very important to clone the message here, otherwise the tag
 							// will be overwritten, and we need to preserve it to reply to
