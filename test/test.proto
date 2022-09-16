@@ -2,7 +2,8 @@ syntax = "proto3";
 option go_package = "github.com/kralicky/totem/test";
 package test;
 import "google/protobuf/empty.proto";
-import "../totem.proto";
+import "github.com/kralicky/totem/totem.proto";
+import "github.com/kralicky/totem/extensions.proto";
 
 service Test {
   rpc TestStream(stream totem.RPC) returns (stream totem.RPC);
@@ -21,8 +22,11 @@ service Hash {
 }
 
 service AddSub {
-  rpc Add(Operands) returns (Number);
-  rpc Sub(Operands) returns (Number);
+  rpc Add(Operands) returns (Number) {
+    option (totem.qos) = {
+      replicationStrategy: Broadcast
+    };
+  }
 }
 
 service Multiply {
