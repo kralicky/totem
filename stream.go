@@ -351,7 +351,7 @@ func (sh *streamController) Run(ctx context.Context) error {
 			Tag: tag,
 			Content: &RPC_Response{
 				Response: &Response{
-					StatusProto: status.New(codes.Canceled, streamErr.Error()).Proto(),
+					StatusProto: status.Convert(streamErr).Proto(),
 				},
 			},
 		}
