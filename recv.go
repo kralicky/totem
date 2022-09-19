@@ -4,9 +4,6 @@ import (
 	"fmt"
 	"runtime/debug"
 	"sync"
-
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 )
 
 type stacktrace struct {
@@ -30,11 +27,12 @@ type recvPayload struct {
 }
 
 type recvWrapper struct {
-	stream   Stream
-	c        chan recvPayload
-	kick     chan struct{}
-	runLock  sync.Mutex
-	recvLock sync.Mutex
+	stream    Stream
+	c         chan recvPayload
+	kick      chan error
+	kickAcked chan struct{}
+	runLock   sync.Mutex
+	recvLock  sync.Mutex
 
 	runStack         stacktrace
 	recvStack        stacktrace
@@ -75,8 +73,12 @@ func (w *recvWrapper) Recv() (*RPC, error) {
 	select {
 	case payload := <-w.c:
 		return payload.RPC, payload.Err
-	case <-w.kick:
-		return nil, status.Error(codes.Canceled, "kicked")
+	case err := <-w.kick:
+		if err == nil {
+			panic("recvWrapper was kicked without an error")
+		}
+		close(w.kickAcked)
+		return nil, err
 	}
 }
 
@@ -94,16 +96,22 @@ func newRecvWrapper(stream Stream) *recvWrapper {
 	st.Load()
 	gKnownStreams[stream] = st
 
-	kick := make(chan struct{})
+	kick := make(chan error, 1)
+	kickAcked := make(chan struct{})
 	go func() {
-		<-kick
+		select {
+		case <-kickAcked:
+		case <-stream.Context().Done():
+		}
+
 		gStreamLock.Lock()
 		defer gStreamLock.Unlock()
 		delete(gKnownStreams, stream)
 	}()
 	return &recvWrapper{
-		stream: stream,
-		c:      make(chan recvPayload, 256),
-		kick:   kick,
+		stream:    stream,
+		c:         make(chan recvPayload, 256),
+		kick:      kick,
+		kickAcked: kickAcked,
 	}
 }

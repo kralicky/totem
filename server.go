@@ -175,19 +175,9 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-chan error) {
 	r.logger.Debug("starting totem server")
 	r.lock.RLock()
-	ch := make(chan error, 2)
+	ch := make(chan error, 1)
 
 	go func() {
-		defer func() {
-			r.lock.Lock()
-			defer r.lock.Unlock()
-			r.logger.With(
-				zap.Int("numControllers", len(r.splicedControllers)),
-			).Debug("kicking spliced controllers")
-			for _, spliced := range r.splicedControllers {
-				spliced.Kick()
-			}
-		}()
 		runErr := r.controller.Run(r.Context())
 		if runErr != nil {
 			if errors.Is(runErr, io.EOF) || status.Code(runErr) == codes.Canceled {
@@ -202,6 +192,16 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 		}
 		ch <- runErr
 		r.lock.RUnlock()
+
+		r.lock.Lock()
+		defer r.lock.Unlock()
+		r.logger.With(
+			zap.Error(runErr),
+			zap.Int("numControllers", len(r.splicedControllers)),
+		).Debug("kicking spliced controllers")
+		for _, spliced := range r.splicedControllers {
+			spliced.Kick(runErr)
+		}
 	}()
 
 	ctx, span := Tracer().Start(context.Background(), "Server.Serve/Discovery",
@@ -213,7 +213,7 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 	span.End()
 
 	if err != nil {
-		ch <- fmt.Errorf("service discovery failed: %w", err)
+		r.controller.Kick(fmt.Errorf("service discovery failed: %w", err))
 		return nil, ch
 	}
 

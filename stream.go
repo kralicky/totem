@@ -1,7 +1,9 @@
 package totem
 
 import (
+	"errors"
 	"fmt"
+	"io"
 	"sync"
 
 	"github.com/google/uuid"
@@ -133,8 +135,9 @@ func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	sh.sendLock.Lock()
 	defer sh.sendLock.Unlock()
 	if err := sh.stream.Send(m); err != nil {
-		lg.With(zap.Error(err)).Warn("stream error; kicking")
-		sh.Kick()
+		if !errors.Is(err, io.EOF) {
+			sh.Kick(err)
+		}
 	}
 	return ch
 }
@@ -163,8 +166,9 @@ func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) 
 		},
 		Metadata: FromMD(md),
 	}); err != nil {
-		lg.With(zap.Error(err)).Warn("stream error; kicking")
-		sh.Kick()
+		if !errors.Is(err, io.EOF) {
+			sh.Kick(err)
+		}
 	}
 }
 
@@ -194,14 +198,16 @@ func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error)
 		},
 		Metadata: FromMD(md),
 	}); err != nil {
-		lg.With(zap.Error(err)).Warn("stream error; kicking")
-		sh.Kick()
+		if !errors.Is(err, io.EOF) {
+			sh.Kick(err)
+		}
 	}
 }
 
-func (sh *streamController) Kick() {
+func (sh *streamController) Kick(err error) {
 	sh.kickOnce.Do(func() {
-		close(sh.receiver.kick)
+		sh.logger.With(zap.Error(err)).Warn("stream error; kicking")
+		sh.receiver.kick <- err
 	})
 }
 
@@ -329,7 +335,6 @@ func (sh *streamController) Run(ctx context.Context) error {
 					panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
 				}
 				future <- msg
-				delete(sh.pendingRPCs, msg.Tag)
 				sh.pendingLock.Unlock()
 			}()
 		default:
