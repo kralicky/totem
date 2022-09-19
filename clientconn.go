@@ -75,7 +75,7 @@ func (cc *clientConn) Invoke(
 				zap.Uint64("tag", rpc.Tag),
 				zap.String("method", method),
 				zap.Error(err),
-			).Warn("received reply with error")
+			).Debug("received reply with error")
 			recordErrorStatus(span, stat)
 			return err
 		}
