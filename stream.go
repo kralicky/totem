@@ -205,8 +205,15 @@ func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error)
 }
 
 func (sh *streamController) Kick(err error) {
+	lg := sh.logger.With(
+		zap.Error(err),
+	)
 	sh.kickOnce.Do(func() {
-		sh.logger.With(zap.Error(err)).Warn("stream error; kicking")
+		if status.Code(err) == codes.Canceled {
+			lg.Debug("stream canceled; kicking")
+		} else {
+			lg.Warn("stream error; kicking")
+		}
 		sh.receiver.kick <- err
 	})
 }
