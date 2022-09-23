@@ -218,6 +218,16 @@ func (sh *streamController) Kick(err error) {
 	})
 }
 
+func (sh *streamController) CloseSend() error {
+	sh.sendLock.Lock()
+	defer sh.sendLock.Unlock()
+	if clientStream, ok := sh.stream.(ClientStream); ok {
+		return clientStream.CloseSend()
+	} else {
+		return fmt.Errorf("CloseSend can only be called on a client stream")
+	}
+}
+
 var (
 	emptyResponse []byte
 )

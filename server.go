@@ -240,3 +240,7 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 func (r *Server) Context() context.Context {
 	return r.stream.Context()
 }
+
+func (r *Server) CloseSend() error {
+	return r.controller.CloseSend()
+}
