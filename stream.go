@@ -352,6 +352,8 @@ func (sh *streamController) Run(ctx context.Context) error {
 					panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
 				}
 				future <- msg
+				close(future)
+				delete(sh.pendingRPCs, msg.Tag)
 				sh.pendingLock.Unlock()
 			}()
 		default:
@@ -372,6 +374,8 @@ func (sh *streamController) Run(ctx context.Context) error {
 				},
 			},
 		}
+		close(future)
+		delete(sh.pendingRPCs, tag)
 	}
 	return streamErr
 }
