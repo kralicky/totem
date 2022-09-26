@@ -22,9 +22,9 @@ type Server struct {
 	ServerOptions
 	stream             Stream
 	lock               sync.RWMutex
-	controller         *streamController
+	controller         *StreamController
 	logger             *zap.Logger
-	splicedControllers []*streamController
+	splicedControllers []*StreamController
 }
 
 type ServerOptions struct {
@@ -58,7 +58,7 @@ func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 
 	lg := Log.Named(options.name)
 
-	ctrl := newStreamController(stream, WithStreamName(options.name))
+	ctrl := NewStreamController(stream, WithStreamName(options.name))
 
 	srv := &Server{
 		ServerOptions: options,
@@ -98,7 +98,7 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	ctrl := newStreamController(stream, WithLogger(lg))
+	ctrl := NewStreamController(stream, WithLogger(lg))
 
 	reflectionDesc, err := LoadServiceDesc(&ServerReflection_ServiceDesc)
 	if err != nil {
@@ -229,7 +229,7 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 		}
 	}
 
-	return &clientConn{
+	return &ClientConn{
 		controller: r.controller,
 		tracer:     Tracer(),
 		logger:     r.logger.Named("cc"),

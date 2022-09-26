@@ -27,14 +27,13 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type streamController struct {
+type StreamController struct {
 	UnimplementedServerReflectionServer
 	StreamControllerOptions
 	stream      Stream
-	count       *atomic.Uint64
 	sendLock    sync.Mutex
-	pendingRPCs map[uint64]chan *RPC
-	pendingLock sync.RWMutex
+	count       *atomic.Uint64
+	pendingRPCs gsync.Map[uint64, chan *RPC]
 	receiver    *recvWrapper
 	kickOnce    sync.Once
 	services    gsync.Map[string, *ServiceHandlerList]
@@ -69,7 +68,7 @@ func WithLogger(logger *zap.Logger) StreamControllerOption {
 // NewStreamHandler creates a new stream handler for the given stream and
 // method set.
 // There can be at most one stream handler per stream.
-func newStreamController(stream Stream, options ...StreamControllerOption) *streamController {
+func NewStreamController(stream Stream, options ...StreamControllerOption) *StreamController {
 	opts := StreamControllerOptions{}
 	opts.apply(options...)
 	if opts.logger == nil {
@@ -78,11 +77,10 @@ func newStreamController(stream Stream, options ...StreamControllerOption) *stre
 		opts.logger = opts.logger.Named(opts.name)
 	}
 
-	sh := &streamController{
+	sh := &StreamController{
 		StreamControllerOptions: opts,
 		stream:                  stream,
 		count:                   atomic.NewUint64(0),
-		pendingRPCs:             map[uint64]chan *RPC{},
 		receiver:                newRecvWrapper(stream),
 		uuid:                    uuid.New().String(),
 	}
@@ -97,7 +95,7 @@ func newStreamController(stream Stream, options ...StreamControllerOption) *stre
 	return sh
 }
 
-func (sh *streamController) RegisterServiceHandler(handler *ServiceHandler) {
+func (sh *StreamController) RegisterServiceHandler(handler *ServiceHandler) {
 	name := handler.Descriptor.GetName()
 	sh.logger.With(
 		zap.String("service", name),
@@ -107,7 +105,7 @@ func (sh *streamController) RegisterServiceHandler(handler *ServiceHandler) {
 	list.Append(handler)
 }
 
-func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
+func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	lg := sh.logger.With(
 		zap.Uint64("tag", m.GetTag()),
 		zap.String("service", m.GetServiceName()),
@@ -128,13 +126,13 @@ func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	m.Tag = tag
 	ch := make(chan *RPC, 1)
 
-	sh.pendingLock.Lock()
-	sh.pendingRPCs[m.Tag] = ch
-	sh.pendingLock.Unlock()
+	sh.pendingRPCs.Store(m.Tag, ch)
 
 	sh.sendLock.Lock()
-	defer sh.sendLock.Unlock()
-	if err := sh.stream.Send(m); err != nil {
+	err := sh.stream.Send(m)
+	sh.sendLock.Unlock()
+
+	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			sh.Kick(err)
 		}
@@ -142,7 +140,7 @@ func (sh *streamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	return ch
 }
 
-func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) {
+func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) {
 	lg := sh.logger.With(
 		zap.Uint64("tag", tag),
 	)
@@ -155,8 +153,7 @@ func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) 
 	otelgrpc.Inject(ctx, &md)
 
 	sh.sendLock.Lock()
-	defer sh.sendLock.Unlock()
-	if err := sh.stream.Send(&RPC{
+	err := sh.stream.Send(&RPC{
 		Tag: tag,
 		Content: &RPC_Response{
 			Response: &Response{
@@ -165,17 +162,20 @@ func (sh *streamController) Reply(ctx context.Context, tag uint64, data []byte) 
 			},
 		},
 		Metadata: FromMD(md),
-	}); err != nil {
+	})
+	sh.sendLock.Unlock()
+
+	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			sh.Kick(err)
 		}
 	}
 }
 
-func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error) {
+func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply error) {
 	lg := sh.logger.With(
 		zap.Uint64("tag", tag),
-		zap.Error(err),
+		zap.Error(reply),
 	)
 	lg.Debug("reply")
 
@@ -186,25 +186,26 @@ func (sh *streamController) ReplyErr(ctx context.Context, tag uint64, err error)
 	otelgrpc.Inject(ctx, &md)
 
 	sh.sendLock.Lock()
-	defer sh.sendLock.Unlock()
-	stat, _ := status.FromError(err)
-	if err := sh.stream.Send(&RPC{
+	err := sh.stream.Send(&RPC{
 		Tag: tag,
 		Content: &RPC_Response{
 			Response: &Response{
 				Response:    nil,
-				StatusProto: stat.Proto(),
+				StatusProto: status.Convert(reply).Proto(),
 			},
 		},
 		Metadata: FromMD(md),
-	}); err != nil {
+	})
+	sh.sendLock.Unlock()
+
+	if err != nil {
 		if !errors.Is(err, io.EOF) {
 			sh.Kick(err)
 		}
 	}
 }
 
-func (sh *streamController) Kick(err error) {
+func (sh *StreamController) Kick(err error) {
 	lg := sh.logger.With(
 		zap.Error(err),
 	)
@@ -218,7 +219,7 @@ func (sh *streamController) Kick(err error) {
 	})
 }
 
-func (sh *streamController) CloseSend() error {
+func (sh *StreamController) CloseSend() error {
 	sh.sendLock.Lock()
 	defer sh.sendLock.Unlock()
 	if clientStream, ok := sh.stream.(ClientStream); ok {
@@ -242,7 +243,7 @@ func init() {
 
 // Run will start the stream handler and block until the stream is finished.
 // This function should only be called once.
-func (sh *streamController) Run(ctx context.Context) error {
+func (sh *StreamController) Run(ctx context.Context) error {
 	var streamErr error
 	sh.receiver.Start()
 	sh.logger.Debug("stream controller running")
@@ -344,25 +345,18 @@ func (sh *streamController) Run(ctx context.Context) error {
 			}()
 		case *RPC_Response:
 			sh.logger.Debug("stream received RPC_Response")
-			go func() {
-				// Received a response from the server
-				sh.pendingLock.Lock()
-				future, ok := sh.pendingRPCs[msg.Tag]
-				if !ok {
-					panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
-				}
-				future <- msg
-				close(future)
-				delete(sh.pendingRPCs, msg.Tag)
-				sh.pendingLock.Unlock()
-			}()
+			// Received a response from the server
+			future, ok := sh.pendingRPCs.LoadAndDelete(msg.Tag)
+			if !ok {
+				panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
+			}
+			future <- msg
+			close(future)
 		default:
 			return fmt.Errorf("invalid content type")
 		}
 	}
-	sh.pendingLock.Lock()
-	defer sh.pendingLock.Unlock()
-	for tag, future := range sh.pendingRPCs {
+	sh.pendingRPCs.Range(func(tag uint64, future chan *RPC) bool {
 		sh.logger.With(
 			zap.Uint64("tag", tag),
 		).Debug("cancelling pending RPC")
@@ -375,12 +369,13 @@ func (sh *streamController) Run(ctx context.Context) error {
 			},
 		}
 		close(future)
-		delete(sh.pendingRPCs, tag)
-	}
+		sh.pendingRPCs.Delete(tag)
+		return true
+	})
 	return streamErr
 }
 
-func (sh *streamController) ListServices(ctx context.Context, req *DiscoveryRequest) (*ServiceInfo, error) {
+func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequest) (*ServiceInfo, error) {
 	sh.logger.With(
 		zap.String("initiator", req.Initiator),
 		zap.Any("visited", req.Visited),
@@ -492,7 +487,7 @@ func (sh *streamController) ListServices(ctx context.Context, req *DiscoveryRequ
 	}, nil
 }
 
-func (sh *streamController) NewInvoker() *streamControllerInvoker {
+func (sh *StreamController) NewInvoker() MethodInvoker {
 	return &streamControllerInvoker{
 		controller: sh,
 		logger:     sh.logger,

@@ -8,7 +8,7 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func discoverServices(ctx context.Context, ctrl *streamController) (*ServiceInfo, error) {
+func discoverServices(ctx context.Context, ctrl *StreamController) (*ServiceInfo, error) {
 	reqBytes, _ := proto.Marshal(&DiscoveryRequest{
 		Initiator:     ctrl.uuid,
 		Visited:       []string{},

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -34,37 +35,40 @@ func TestTotem(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	res, err := resource.New(context.Background(),
-		resource.WithSchemaURL(semconv.SchemaURL),
-		resource.WithFromEnv(),
-		resource.WithProcess(),
-		resource.WithAttributes(
-			semconv.ServiceNameKey.String("totem_test"),
-		),
-	)
-	Expect(err).NotTo(HaveOccurred())
-	opts := []tracesdk.TracerProviderOption{
-		tracesdk.WithResource(res),
+	if os.Getenv("TRACING_ENABLED") == "1" {
+		res, err := resource.New(context.Background(),
+			resource.WithSchemaURL(semconv.SchemaURL),
+			resource.WithFromEnv(),
+			resource.WithProcess(),
+			resource.WithAttributes(
+				semconv.ServiceNameKey.String("totem_test"),
+			),
+		)
+		Expect(err).NotTo(HaveOccurred())
+		opts := []tracesdk.TracerProviderOption{
+			tracesdk.WithResource(res),
+		}
+		exp, err := jaeger.New(jaeger.WithCollectorEndpoint())
+		Expect(err).NotTo(HaveOccurred())
+		opts = append(opts, tracesdk.WithBatcher(exp))
+
+		tp := tracesdk.NewTracerProvider(opts...)
+		otel.SetTracerProvider(tp)
+		otel.SetTextMapPropagator(autoprop.NewTextMapPropagator())
+
+		DeferCleanup(func() {
+			tp.ForceFlush(context.Background())
+		})
 	}
-
-	exp, err := jaeger.New(jaeger.WithCollectorEndpoint())
-	Expect(err).NotTo(HaveOccurred())
-	opts = append(opts, tracesdk.WithBatcher(exp))
-
-	tp := tracesdk.NewTracerProvider(opts...)
-	otel.SetTracerProvider(tp)
-	otel.SetTextMapPropagator(autoprop.NewTextMapPropagator())
-
-	DeferCleanup(func() {
-		tp.ForceFlush(context.Background())
-	})
 })
 
 type testCase struct {
 	ServerHandler func(stream Test_TestStreamServer) error
 	ClientHandler func(stream Test_TestStreamClient) error
 
-	listener net.Listener
+	ServerOptions []grpc.ServerOption
+	ClientOptions []grpc.DialOption
+	listener      net.Listener
 }
 
 type testServer struct {
@@ -87,13 +91,15 @@ func (tc *testCase) Run(until ...chan struct{}) {
 		wg:       sync.WaitGroup{},
 	}
 	srv.wg.Add(2)
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(tc.ServerOptions...)
 	RegisterTestServer(grpcServer, &srv)
 	go grpcServer.Serve(tc.listener)
 	conn := tc.Dial()
 	defer conn.Close()
 	client := NewTestClient(conn)
-	stream, _ := client.TestStream(context.Background())
+	stream, err := client.TestStream(context.Background())
+	Expect(err).NotTo(HaveOccurred())
+
 	go func() {
 		defer GinkgoRecover()
 		err := tc.ClientHandler(stream)
@@ -110,12 +116,7 @@ func (tc *testCase) Run(until ...chan struct{}) {
 			<-c
 		}
 	} else {
-		done := make(chan struct{})
-		go func() {
-			defer close(done)
-			srv.wg.Wait()
-		}()
-		Eventually(done).Should(BeClosed())
+		srv.wg.Wait()
 	}
 }
 
@@ -149,10 +150,11 @@ func (tc *testCase) AsyncRunServerOnly() {
 
 func (tc *testCase) Dial() *grpc.ClientConn {
 	conn, err := grpc.DialContext(context.Background(), tc.listener.Addr().String(),
-		grpc.WithInsecure(),
-		grpc.WithBlock(),
-		grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
-	)
+		append(tc.ClientOptions,
+			grpc.WithInsecure(),
+			grpc.WithDefaultCallOptions(grpc.WaitForReady(true)),
+		)...)
+
 	Expect(err).NotTo(HaveOccurred())
 	return conn
 }
@@ -263,5 +265,15 @@ func (s *multiplyServer) Mul(ctx context.Context, op *Operands) (*Number, error)
 	defer s.requestLimiter.Tick()
 	return &Number{
 		Value: int64(op.A) * int64(op.B),
+	}, nil
+}
+
+type echoServer struct {
+	UnsafeEchoServer
+}
+
+func (s *echoServer) Echo(_ context.Context, in *Bytes) (*Bytes, error) {
+	return &Bytes{
+		Data: in.Data,
 	}, nil
 }

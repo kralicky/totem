@@ -5,17 +5,17 @@ go 1.18
 require (
 	github.com/charmbracelet/lipgloss v0.6.0
 	github.com/golang/protobuf v1.5.2
-	github.com/google/uuid v1.1.2
+	github.com/google/uuid v1.3.0
 	github.com/jhump/protoreflect v1.13.0
 	github.com/kralicky/gpkg v0.0.0-20220311205216-0d8ea9557555
-	github.com/kralicky/ragu v1.0.0-rc1
-	github.com/magefile/mage v1.13.0
-	github.com/onsi/ginkgo/v2 v2.1.6
+	github.com/kralicky/ragu v1.0.0-beta2
+	github.com/magefile/mage v1.14.0
+	github.com/onsi/ginkgo/v2 v2.2.0
 	github.com/onsi/gomega v1.20.2
-	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.34.0
-	go.opentelemetry.io/contrib/propagators/autoprop v0.34.0
+	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.36.0
+	go.opentelemetry.io/contrib/propagators/autoprop v0.36.0
 	go.opentelemetry.io/otel v1.10.0
-	go.opentelemetry.io/otel/exporters/jaeger v1.9.0
+	go.opentelemetry.io/otel/exporters/jaeger v1.10.0
 	go.opentelemetry.io/otel/sdk v1.10.0
 	go.opentelemetry.io/otel/trace v1.10.0
 	go.uber.org/atomic v1.10.0

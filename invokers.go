@@ -1,8 +1,6 @@
 package totem
 
 import (
-	"sync"
-
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -13,40 +11,6 @@ import (
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
-
-type SharedMethodSet struct {
-	methodsLock sync.RWMutex
-	methods     map[string]MethodInvoker
-}
-
-func NewSharedMethodSet() *SharedMethodSet {
-	return &SharedMethodSet{
-		methods: make(map[string]MethodInvoker),
-	}
-}
-
-func (s *SharedMethodSet) Put(name string, invoker MethodInvoker) {
-	s.methodsLock.Lock()
-	defer s.methodsLock.Unlock()
-	s.methods[name] = invoker
-}
-
-func (s *SharedMethodSet) Get(name string) (MethodInvoker, bool) {
-	s.methodsLock.RLock()
-	defer s.methodsLock.RUnlock()
-	m, ok := s.methods[name]
-	return m, ok
-}
-
-func (s *SharedMethodSet) Range(fn func(name string, invoker MethodInvoker) bool) {
-	s.methodsLock.RLock()
-	defer s.methodsLock.RUnlock()
-	for name, invoker := range s.methods {
-		if !fn(name, invoker) {
-			return
-		}
-	}
-}
 
 type MethodInvoker interface {
 	Invoke(ctx context.Context, rpc *RPC) ([]byte, error)
@@ -110,11 +74,11 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 }
 
 type streamControllerInvoker struct {
-	controller *streamController
+	controller *StreamController
 	logger     *zap.Logger
 }
 
-func newStreamControllerInvoker(ctrl *streamController, logger *zap.Logger) *streamControllerInvoker {
+func newStreamControllerInvoker(ctrl *StreamController, logger *zap.Logger) *streamControllerInvoker {
 	return &streamControllerInvoker{
 		controller: ctrl,
 		logger:     logger,
