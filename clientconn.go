@@ -13,13 +13,15 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-type clientConn struct {
-	controller *streamController
+type ClientConn struct {
+	controller *StreamController
 	tracer     trace.Tracer
 	logger     *zap.Logger
 }
 
-func (cc *clientConn) Invoke(
+var _ grpc.ClientConnInterface = (*ClientConn)(nil)
+
+func (cc *ClientConn) Invoke(
 	ctx context.Context,
 	method string,
 	req interface{},
@@ -109,7 +111,7 @@ func (cc *clientConn) Invoke(
 	}
 }
 
-func (cc *clientConn) NewStream(
+func (cc *ClientConn) NewStream(
 	ctx context.Context,
 	desc *grpc.StreamDesc,
 	method string,

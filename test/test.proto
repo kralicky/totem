@@ -37,6 +37,10 @@ service Error {
   rpc Error(ErrorRequest) returns (google.protobuf.Empty);
 }
 
+service Echo {
+  rpc Echo(Bytes) returns (Bytes);
+}
+
 message ErrorRequest {
   bool ReturnError = 1;
 }
@@ -47,6 +51,10 @@ message Number {
 
 message String {
   string Str = 1;
+}
+
+message Bytes {
+  bytes Data = 1;
 }
 
 message Operands {
