@@ -3,7 +3,7 @@
 package main
 
 import (
-	"github.com/kralicky/ragu/pkg/ragu"
+	"github.com/kralicky/ragu"
 	"github.com/magefile/mage/mg"
 )
 
