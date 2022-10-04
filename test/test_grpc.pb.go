@@ -396,86 +396,86 @@ var Hash_ServiceDesc = grpc.ServiceDesc{
 	Metadata: "github.com/kralicky/totem/test/test.proto",
 }
 
-// AddSubClient is the client API for AddSub service.
+// NotifyClient is the client API for Notify service.
 //
 // For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
-type AddSubClient interface {
-	Add(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error)
+type NotifyClient interface {
+	Notify(ctx context.Context, in *String, opts ...grpc.CallOption) (*emptypb.Empty, error)
 }
 
-type addSubClient struct {
+type notifyClient struct {
 	cc grpc.ClientConnInterface
 }
 
-func NewAddSubClient(cc grpc.ClientConnInterface) AddSubClient {
-	return &addSubClient{cc}
+func NewNotifyClient(cc grpc.ClientConnInterface) NotifyClient {
+	return &notifyClient{cc}
 }
 
-func (c *addSubClient) Add(ctx context.Context, in *Operands, opts ...grpc.CallOption) (*Number, error) {
-	out := new(Number)
-	err := c.cc.Invoke(ctx, "/test.AddSub/Add", in, out, opts...)
+func (c *notifyClient) Notify(ctx context.Context, in *String, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/test.Notify/Notify", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
 }
 
-// AddSubServer is the server API for AddSub service.
-// All implementations must embed UnimplementedAddSubServer
+// NotifyServer is the server API for Notify service.
+// All implementations must embed UnimplementedNotifyServer
 // for forward compatibility
-type AddSubServer interface {
-	Add(context.Context, *Operands) (*Number, error)
-	mustEmbedUnimplementedAddSubServer()
+type NotifyServer interface {
+	Notify(context.Context, *String) (*emptypb.Empty, error)
+	mustEmbedUnimplementedNotifyServer()
 }
 
-// UnimplementedAddSubServer must be embedded to have forward compatible implementations.
-type UnimplementedAddSubServer struct {
+// UnimplementedNotifyServer must be embedded to have forward compatible implementations.
+type UnimplementedNotifyServer struct {
 }
 
-func (UnimplementedAddSubServer) Add(context.Context, *Operands) (*Number, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Add not implemented")
+func (UnimplementedNotifyServer) Notify(context.Context, *String) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Notify not implemented")
 }
-func (UnimplementedAddSubServer) mustEmbedUnimplementedAddSubServer() {}
+func (UnimplementedNotifyServer) mustEmbedUnimplementedNotifyServer() {}
 
-// UnsafeAddSubServer may be embedded to opt out of forward compatibility for this service.
-// Use of this interface is not recommended, as added methods to AddSubServer will
+// UnsafeNotifyServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to NotifyServer will
 // result in compilation errors.
-type UnsafeAddSubServer interface {
-	mustEmbedUnimplementedAddSubServer()
+type UnsafeNotifyServer interface {
+	mustEmbedUnimplementedNotifyServer()
 }
 
-func RegisterAddSubServer(s grpc.ServiceRegistrar, srv AddSubServer) {
-	s.RegisterService(&AddSub_ServiceDesc, srv)
+func RegisterNotifyServer(s grpc.ServiceRegistrar, srv NotifyServer) {
+	s.RegisterService(&Notify_ServiceDesc, srv)
 }
 
-func _AddSub_Add_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(Operands)
+func _Notify_Notify_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(String)
 	if err := dec(in); err != nil {
 		return nil, err
 	}
 	if interceptor == nil {
-		return srv.(AddSubServer).Add(ctx, in)
+		return srv.(NotifyServer).Notify(ctx, in)
 	}
 	info := &grpc.UnaryServerInfo{
 		Server:     srv,
-		FullMethod: "/test.AddSub/Add",
+		FullMethod: "/test.Notify/Notify",
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(AddSubServer).Add(ctx, req.(*Operands))
+		return srv.(NotifyServer).Notify(ctx, req.(*String))
 	}
 	return interceptor(ctx, in, info, handler)
 }
 
-// AddSub_ServiceDesc is the grpc.ServiceDesc for AddSub service.
+// Notify_ServiceDesc is the grpc.ServiceDesc for Notify service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
-var AddSub_ServiceDesc = grpc.ServiceDesc{
-	ServiceName: "test.AddSub",
-	HandlerType: (*AddSubServer)(nil),
+var Notify_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Notify",
+	HandlerType: (*NotifyServer)(nil),
 	Methods: []grpc.MethodDesc{
 		{
-			MethodName: "Add",
-			Handler:    _AddSub_Add_Handler,
+			MethodName: "Notify",
+			Handler:    _Notify_Notify_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

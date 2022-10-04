@@ -21,8 +21,8 @@ service Hash {
   rpc Hash(String) returns (String);
 }
 
-service AddSub {
-  rpc Add(Operands) returns (Number) {
+service Notify {
+  rpc Notify(String) returns (google.protobuf.Empty) {
     option (totem.qos) = {
       replicationStrategy: Broadcast
     };

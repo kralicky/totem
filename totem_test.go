@@ -475,6 +475,91 @@ var _ = Describe("Test", func() {
 			checkHash(cc)
 		}
 	})
+	It("should handle QOS options", func() {
+		s1c := make(chan string, 1)
+		s2c := make(chan string, 1)
+		s1 := &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s1"))
+				if err != nil {
+					return err
+				}
+				ns := notifyServer{
+					C: s1c,
+				}
+				test.RegisterNotifyServer(ts, &ns)
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+		s2 := &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s2"))
+				if err != nil {
+					return err
+				}
+				ns := notifyServer{
+					C: s2c,
+				}
+				test.RegisterNotifyServer(ts, &ns)
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+		s1.AsyncRunServerOnly()
+		s2.AsyncRunServerOnly()
+
+		s3 := &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s3"))
+				if err != nil {
+					return err
+				}
+
+				{
+					s1Conn := s1.Dial()
+					s1Client := test.NewTestClient(s1Conn)
+					s1Stream, err := s1Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+
+					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+				}
+				{
+					s2Conn := s2.Dial()
+					s2Client := test.NewTestClient(s2Conn)
+					s2Stream, err := s2Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+
+					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+				}
+
+				_, errC := ts.Serve()
+
+				return <-errC
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				tc, err := totem.NewServer(stream, totem.WithName("s3_client"))
+				if err != nil {
+					return err
+				}
+				cc, _ := tc.Serve()
+				notifyClient := test.NewNotifyClient(cc)
+				notifyClient.Notify(context.Background(), &test.String{Str: "hello"})
+				return nil
+			},
+		}
+
+		done := make(chan struct{})
+		go s3.Run(done)
+
+		Eventually(s1c).Should(Receive(Equal("hello")))
+		Eventually(s2c).Should(Receive(Equal("hello")))
+		close(done)
+	})
 })
 
 func checkIncrement(cc grpc.ClientConnInterface) {

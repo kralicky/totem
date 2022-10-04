@@ -223,25 +223,6 @@ func (s *hashServer) Hash(ctx context.Context, str *String) (*String, error) {
 	}, nil
 }
 
-type addSubServer struct {
-	UnsafeAddSubServer
-	requestLimiter
-}
-
-func (s *addSubServer) Add(ctx context.Context, op *Operands) (*Number, error) {
-	defer s.requestLimiter.Tick()
-	return &Number{
-		Value: int64(op.A) + int64(op.B),
-	}, nil
-}
-
-func (s *addSubServer) Sub(ctx context.Context, op *Operands) (*Number, error) {
-	defer s.requestLimiter.Tick()
-	return &Number{
-		Value: int64(op.A) - int64(op.B),
-	}, nil
-}
-
 type errorServer struct {
 	UnimplementedErrorServer
 	requestLimiter
@@ -276,4 +257,16 @@ func (s *echoServer) Echo(_ context.Context, in *Bytes) (*Bytes, error) {
 	return &Bytes{
 		Data: in.Data,
 	}, nil
+}
+
+type notifyServer struct {
+	UnsafeNotifyServer
+	C chan string
+}
+
+func (s *notifyServer) Notify(_ context.Context, in *String) (*emptypb.Empty, error) {
+	if s.C != nil {
+		s.C <- in.Str
+	}
+	return &emptypb.Empty{}, nil
 }

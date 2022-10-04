@@ -46,10 +46,11 @@ func NewDefaultServiceHandler(
 		controllerContext: ctx,
 		Descriptor:        descriptor,
 		MethodInvokers:    make(map[string]MethodInvoker),
+		MethodQOS:         make(map[string]*QOS),
 	}
 	for _, method := range descriptor.Method {
-		if proto.HasExtension(method, E_Qos) {
-			value, err := proto.GetExtension(method, E_Qos)
+		if proto.HasExtension(method.GetOptions(), E_Qos) {
+			value, err := proto.GetExtension(method.GetOptions(), E_Qos)
 			if err != nil {
 				panic(err)
 			}
