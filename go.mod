@@ -8,7 +8,7 @@ require (
 	github.com/google/uuid v1.3.0
 	github.com/jhump/protoreflect v1.13.0
 	github.com/kralicky/gpkg v0.0.0-20220311205216-0d8ea9557555
-	github.com/kralicky/ragu v1.0.0-beta2
+	github.com/kralicky/ragu v1.0.0-rc3
 	github.com/magefile/mage v1.14.0
 	github.com/onsi/ginkgo/v2 v2.2.0
 	github.com/onsi/gomega v1.20.2
@@ -35,7 +35,7 @@ require (
 	github.com/golang/glog v1.0.0 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
 	github.com/iancoleman/strcase v0.2.0 // indirect
-	github.com/kralicky/grpc-gateway/v2 v2.11.0-1 // indirect
+	github.com/kralicky/grpc-gateway/v2 v2.11.3 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
