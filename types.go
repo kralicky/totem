@@ -3,10 +3,10 @@ package totem
 import (
 	"sync"
 
-	"github.com/golang/protobuf/proto"
 	"golang.org/x/exp/slices"
 	"golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
 
@@ -31,6 +31,7 @@ type ServiceHandler struct {
 	Descriptor        *descriptorpb.ServiceDescriptorProto
 	MethodInvokers    map[string]MethodInvoker
 	MethodQOS         map[string]*QOS
+	IsLocal           bool
 }
 
 func (s *ServiceHandler) Done() <-chan struct{} {
@@ -47,20 +48,16 @@ func NewDefaultServiceHandler(
 		Descriptor:        descriptor,
 		MethodInvokers:    make(map[string]MethodInvoker),
 		MethodQOS:         make(map[string]*QOS),
+		IsLocal:           invoker.IsLocal(),
 	}
 	for _, method := range descriptor.Method {
 		if proto.HasExtension(method.GetOptions(), E_Qos) {
-			value, err := proto.GetExtension(method.GetOptions(), E_Qos)
-			if err != nil {
-				panic(err)
+			qos := proto.GetExtension(method.GetOptions(), E_Qos).(*QOS)
+			if qos.ReplicationStrategy == ReplicationStrategy_Broadcast && method.GetOutputType() != ".google.protobuf.Empty" {
+				// todo: temporary restriction
+				panic("methods with Broadcast ReplicationStrategy must have a response type of google.protobuf.Empty")
 			}
-			if qos, ok := value.(*QOS); ok {
-				if qos.ReplicationStrategy == ReplicationStrategy_Broadcast && method.GetOutputType() != ".google.protobuf.Empty" {
-					// todo: temporary restriction
-					panic("methods with Broadcast ReplicationStrategy must have a response type of google.protobuf.Empty")
-				}
-				sh.MethodQOS[method.GetName()] = qos
-			}
+			sh.MethodQOS[method.GetName()] = qos
 		}
 		sh.MethodInvokers[method.GetName()] = invoker
 	}

@@ -14,6 +14,7 @@ import (
 
 type MethodInvoker interface {
 	Invoke(ctx context.Context, rpc *RPC) ([]byte, error)
+	IsLocal() bool // todo: this identification could be improved
 }
 
 type localServiceInvoker struct {
@@ -73,6 +74,10 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 	}
 }
 
+func (l *localServiceInvoker) IsLocal() bool {
+	return true
+}
+
 type streamControllerInvoker struct {
 	controller *StreamController
 	logger     *zap.Logger
@@ -122,4 +127,8 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (r *streamControllerInvoker) IsLocal() bool {
+	return false
 }

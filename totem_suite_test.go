@@ -29,7 +29,7 @@ import (
 )
 
 func TestTotem(t *testing.T) {
-	SetDefaultEventuallyTimeout(5 * time.Second)
+	SetDefaultEventuallyTimeout(60 * time.Second)
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Totem Suite")
 }

@@ -9,6 +9,10 @@ extend google.protobuf.MethodOptions {
   QOS qos = 10001;
 }
 
+extend google.protobuf.ServiceOptions {
+  Visibility visibility = 10002;
+}
+
 enum ReplicationStrategy {
   First = 0;
   Broadcast = 1;
@@ -16,4 +20,8 @@ enum ReplicationStrategy {
 
 message QOS {
   ReplicationStrategy replicationStrategy = 1;
+}
+
+message Visibility {
+  bool splicedClients = 1;
 }

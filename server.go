@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 )
 
 type Server struct {
@@ -100,12 +101,24 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 
 	ctrl := NewStreamController(stream, WithLogger(lg))
 
-	reflectionDesc, err := LoadServiceDesc(&ServerReflection_ServiceDesc)
-	if err != nil {
-		panic(err)
-	}
-	ctrl.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(), reflectionDesc,
-		newLocalServiceInvoker(r.controller, &ServerReflection_ServiceDesc, r.logger, r.interceptor)))
+	r.controller.services.Range(func(key string, value *ServiceHandlerList) bool {
+		value.Range(func(sh *ServiceHandler) bool {
+			if !sh.IsLocal {
+				return true
+			}
+			if proto.HasExtension(sh.Descriptor.Options, E_Visibility) {
+				vis := proto.GetExtension(sh.Descriptor.Options, E_Visibility).(*Visibility)
+				if vis.SplicedClients {
+					r.logger.With(
+						zap.String("service", sh.Descriptor.GetName()),
+					).Debug("enabling local service on spliced controller due to visibility option")
+					ctrl.RegisterServiceHandler(sh)
+				}
+			}
+			return true
+		})
+		return true
+	})
 
 	go func() {
 		if err := ctrl.Run(stream.Context()); err != nil {
