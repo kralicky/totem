@@ -219,14 +219,29 @@ func (sh *StreamController) Kick(err error) {
 	})
 }
 
-func (sh *StreamController) CloseSend() error {
+// If the stream is a client stream, this will call CloseSend on the stream.
+// If the stream is a server stream, this will call Recv on the stream until
+// it returns io.EOF.
+func (sh *StreamController) CloseOrRecv() error {
 	sh.sendLock.Lock()
 	defer sh.sendLock.Unlock()
-	if clientStream, ok := sh.stream.(ClientStream); ok {
-		return clientStream.CloseSend()
-	} else {
-		return fmt.Errorf("CloseSend can only be called on a client stream")
+	switch stream := sh.stream.(type) {
+	case ClientStream:
+		if err := stream.CloseSend(); err != nil {
+			return err
+		}
+		sh.receiver.Wait()
+		return nil
+	case ServerStream:
+		sh.receiver.Wait()
+		for {
+			_, err := stream.Recv()
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+		}
 	}
+	return nil
 }
 
 var (
@@ -255,6 +270,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		// individual RPC traces to the stream trace
 		streamMetadata.Delete("traceparent")
 	}
+	var inflightRequests sync.WaitGroup
 	for {
 		msg, err := sh.receiver.Recv()
 		if err != nil {
@@ -274,7 +290,9 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		switch msg.Content.(type) {
 		case *RPC_Request:
 			sh.logger.Debug("stream received RPC_Request")
+			inflightRequests.Add(1)
 			go func() {
+				defer inflightRequests.Done()
 				ctx, span := Tracer().Start(ctx, "RPC_Request: "+msg.QualifiedMethodName(),
 					trace.WithAttributes(
 						attribute.String("func", "streamController.Run/RPC_Request"),
@@ -372,6 +390,9 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		sh.pendingRPCs.Delete(tag)
 		return true
 	})
+	sh.logger.Debug("waiting for any inflight requests to complete")
+	inflightRequests.Wait()
+	sh.logger.Debug("all requests complete; stopping stream controller")
 	return streamErr
 }
 

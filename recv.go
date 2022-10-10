@@ -33,21 +33,22 @@ type recvWrapper struct {
 	kickAcked chan struct{}
 	runLock   sync.Mutex
 	recvLock  sync.Mutex
+	done      chan struct{}
 
 	runStack         stacktrace
 	recvStack        stacktrace
 	constructorStack stacktrace
 }
 
-func (w *recvWrapper) Start() chan error {
+func (w *recvWrapper) Start() {
 	if !w.runLock.TryLock() {
 		w.runStack.Print()
 		panic("attempted to call recvWrapper.Run twice")
 	}
 	w.runStack.Load()
-	c := make(chan error)
 	go func() {
 		defer w.runLock.Unlock()
+		defer close(w.done)
 		for {
 			rpc, err := w.stream.Recv()
 			w.c <- recvPayload{
@@ -55,12 +56,14 @@ func (w *recvWrapper) Start() chan error {
 				Err: err,
 			}
 			if err != nil {
-				c <- err
 				return
 			}
 		}
 	}()
-	return c
+}
+
+func (w *recvWrapper) Wait() {
+	<-w.done
 }
 
 func (w *recvWrapper) Recv() (*RPC, error) {
@@ -111,6 +114,7 @@ func newRecvWrapper(stream Stream) *recvWrapper {
 	return &recvWrapper{
 		stream:    stream,
 		c:         make(chan recvPayload, 256),
+		done:      make(chan struct{}),
 		kick:      kick,
 		kickAcked: kickAcked,
 	}

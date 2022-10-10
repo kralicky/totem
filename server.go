@@ -87,6 +87,7 @@ func (r *Server) RegisterService(desc *grpc.ServiceDesc, impl interface{}) {
 
 // Splice configures this server to forward any incoming RPCs for the given
 // service(s) to a different totem stream.
+// The totem server will handle closing the spliced stream.
 func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	ctrlOptions := StreamControllerOptions{}
 	ctrlOptions.apply(opts...)
@@ -180,12 +181,7 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 
 // Serve starts the totem server, which takes control of the stream and begins
 // handling incoming and outgoing RPCs.
-//
-// Optionally, if one non-nil channel is passed to this function, the server
-// will wait until the channel is closed before starting. This can be used to
-// prevent race conditions if you want to interact with the returned ClientConn
-// and prevent the server from invoking any message handlers while doing so.
-func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-chan error) {
+func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	r.logger.Debug("starting totem server")
 	r.lock.RLock()
 	ch := make(chan error, 1)
@@ -203,7 +199,6 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 		} else {
 			r.logger.Debug("stream handler exited with no error")
 		}
-		ch <- runErr
 		r.lock.RUnlock()
 
 		r.lock.Lock()
@@ -214,7 +209,10 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 		).Debug("kicking spliced controllers")
 		for _, spliced := range r.splicedControllers {
 			spliced.Kick(runErr)
+			spliced.CloseOrRecv()
 		}
+		r.controller.CloseOrRecv()
+		ch <- runErr
 	}()
 
 	ctx, span := Tracer().Start(context.Background(), "Server.Serve/Discovery",
@@ -227,6 +225,7 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 
 	if err != nil {
 		r.controller.Kick(fmt.Errorf("service discovery failed: %w", err))
+		r.controller.CloseOrRecv()
 		return nil, ch
 	}
 
@@ -252,8 +251,4 @@ func (r *Server) Serve(condition ...chan struct{}) (grpc.ClientConnInterface, <-
 // Returns the server's stream context. Only valid after Serve has been called.
 func (r *Server) Context() context.Context {
 	return r.stream.Context()
-}
-
-func (r *Server) CloseSend() error {
-	return r.controller.CloseSend()
 }
