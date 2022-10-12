@@ -2,9 +2,7 @@ package totem
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"reflect"
 	"sync"
@@ -123,12 +121,12 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 
 	go func() {
 		if err := ctrl.Run(stream.Context()); err != nil {
-			if errors.Is(err, io.EOF) || status.Code(err) == codes.Canceled {
-				r.logger.Debug("stream handler closed")
+			if status.Code(err) == codes.Canceled {
+				r.logger.Debug("stream closed")
 			} else {
 				r.logger.With(
 					zap.Error(err),
-				).Warn("stream handler exited with error")
+				).Warn("stream exited with error")
 			}
 		}
 	}()
@@ -184,16 +182,22 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	r.logger.Debug("starting totem server")
 	r.lock.RLock()
-	ch := make(chan error, 1)
+	ch := make(chan error, 2)
 
 	go func() {
 		runErr := r.controller.Run(r.Context())
 		if runErr != nil {
-			r.logger.With(
-				zap.Error(runErr),
-			).Warn("stream handler exited with error")
+			if status.Code(runErr) == codes.Canceled {
+				r.logger.With(
+					zap.Error(runErr),
+				).Debug("stream canceled")
+			} else {
+				r.logger.With(
+					zap.Error(runErr),
+				).Warn("stream exited with error")
+			}
 		} else {
-			r.logger.Debug("stream handler exited with no error")
+			r.logger.Debug("stream closed")
 		}
 		r.lock.RUnlock()
 
@@ -226,6 +230,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	if err != nil {
 		r.controller.Kick(fmt.Errorf("service discovery failed: %w", err))
 		r.controller.CloseOrRecv()
+		ch <- err
 		return nil, ch
 	}
 

@@ -65,9 +65,9 @@ func WithLogger(logger *zap.Logger) StreamControllerOption {
 	}
 }
 
-// NewStreamHandler creates a new stream handler for the given stream and
+// NewStreamController creates a new stream controller for the given stream and
 // method set.
-// There can be at most one stream handler per stream.
+// There can be at most one stream controller per stream.
 func NewStreamController(stream Stream, options ...StreamControllerOption) *StreamController {
 	opts := StreamControllerOptions{}
 	opts.apply(options...)
@@ -259,7 +259,7 @@ func init() {
 	emptyResponse = data
 }
 
-// Run will start the stream handler and block until the stream is finished.
+// Run will start the stream controller and block until the stream is finished.
 // This function should only be called once.
 func (sh *StreamController) Run(ctx context.Context) error {
 	var streamErr error
