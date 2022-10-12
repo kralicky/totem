@@ -5,8 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
-	"fmt"
-	"io"
 	"time"
 
 	"github.com/kralicky/totem"
@@ -125,13 +123,10 @@ var _ = Describe("Test", func() {
 
 				select {
 				case err := <-errC:
-					if !errors.Is(err, io.EOF) && status.Code(err) != codes.Canceled {
-						return fmt.Errorf("expected EOF, got %v", err)
-					}
+					return err
 				case <-time.After(timeout):
 					return errors.New("timeout")
 				}
-				return nil
 			},
 		}
 		tc.Run()
@@ -251,13 +246,8 @@ var _ = Describe("Test", func() {
 
 				go func() {
 					defer GinkgoRecover()
-					ok := <-errC
-					if ok != nil && ok != io.EOF {
-						Fail(ok.Error())
-					}
-					if err := <-errC; err != nil {
-						Fail(err.Error())
-					}
+					err := <-errC
+					Expect(err).To(Or(BeNil(), WithTransform(status.Code, Equal(codes.Canceled))))
 				}()
 
 				checkHash(cc)

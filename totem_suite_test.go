@@ -4,8 +4,6 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
-	"errors"
-	"io"
 	"net"
 	"os"
 	"sync"
@@ -97,26 +95,26 @@ func (tc *testCase) Run(until ...chan struct{}) {
 	conn := tc.Dial()
 	defer conn.Close()
 	client := NewTestClient(conn)
-	stream, err := client.TestStream(context.Background())
+	ctx, ca := context.WithCancel(context.Background())
+	stream, err := client.TestStream(ctx)
 	Expect(err).NotTo(HaveOccurred())
 
 	go func() {
 		defer GinkgoRecover()
+		defer srv.wg.Done()
 		err := tc.ClientHandler(stream)
-		if err != nil {
-			if status.Code(err) != codes.Canceled && !errors.Is(err, io.EOF) {
-				Fail(err.Error())
-			}
-		}
-		srv.wg.Done()
+		Expect(err).To(Or(BeNil(), WithTransform(status.Code, Equal(codes.Canceled))))
 	}()
 
 	if len(until) > 0 {
 		for _, c := range until {
 			<-c
 		}
+		ca()
+		srv.wg.Wait()
 	} else {
 		srv.wg.Wait()
+		ca()
 	}
 }
 

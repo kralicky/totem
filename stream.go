@@ -236,8 +236,11 @@ func (sh *StreamController) CloseOrRecv() error {
 		sh.receiver.Wait()
 		for {
 			_, err := stream.Recv()
-			if errors.Is(err, io.EOF) {
-				return nil
+			if err != nil {
+				if errors.Is(err, io.EOF) {
+					return nil
+				}
+				return err
 			}
 		}
 	}
@@ -274,7 +277,9 @@ func (sh *StreamController) Run(ctx context.Context) error {
 	for {
 		msg, err := sh.receiver.Recv()
 		if err != nil {
-			streamErr = err
+			if !errors.Is(err, io.EOF) {
+				streamErr = err
+			}
 			break
 		}
 		md := msg.Metadata.ToMD()

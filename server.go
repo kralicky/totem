@@ -189,13 +189,9 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	go func() {
 		runErr := r.controller.Run(r.Context())
 		if runErr != nil {
-			if errors.Is(runErr, io.EOF) || status.Code(runErr) == codes.Canceled {
-				r.logger.Debug("stream handler closed")
-			} else {
-				r.logger.With(
-					zap.Error(runErr),
-				).Warn("stream handler exited with error")
-			}
+			r.logger.With(
+				zap.Error(runErr),
+			).Warn("stream handler exited with error")
 		} else {
 			r.logger.Debug("stream handler exited with no error")
 		}
@@ -203,12 +199,16 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 
 		r.lock.Lock()
 		defer r.lock.Unlock()
-		r.logger.With(
-			zap.Error(runErr),
-			zap.Int("numControllers", len(r.splicedControllers)),
-		).Debug("kicking spliced controllers")
+		if runErr != nil {
+			r.logger.With(
+				zap.Error(runErr),
+				zap.Int("numControllers", len(r.splicedControllers)),
+			).Debug("kicking spliced controllers")
+		}
 		for _, spliced := range r.splicedControllers {
-			spliced.Kick(runErr)
+			if runErr != nil {
+				spliced.Kick(runErr)
+			}
 			spliced.CloseOrRecv()
 		}
 		r.controller.CloseOrRecv()
