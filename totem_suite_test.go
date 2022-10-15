@@ -4,8 +4,10 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/hex"
+	"fmt"
 	"net"
 	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -25,6 +27,13 @@ import (
 
 	. "github.com/kralicky/totem/test"
 )
+
+var defaultServerOpts = []grpc.ServerOption{
+	grpc.ReadBufferSize(0),
+	grpc.NumStreamWorkers(uint32(runtime.NumCPU())),
+	grpc.InitialConnWindowSize(64 * 1024 * 1024), // 64MB
+	grpc.InitialWindowSize(64 * 1024 * 1024),     // 64MB
+}
 
 func TestTotem(t *testing.T) {
 	SetDefaultEventuallyTimeout(60 * time.Second)
@@ -127,7 +136,7 @@ func (tc *testCase) RunServerOnly() {
 		wg:       sync.WaitGroup{},
 	}
 	srv.wg.Add(1)
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(tc.ServerOptions...)
 	RegisterTestServer(grpcServer, &srv)
 	grpcServer.Serve(tc.listener)
 }
@@ -141,7 +150,7 @@ func (tc *testCase) AsyncRunServerOnly() {
 		wg:       sync.WaitGroup{},
 	}
 	srv.wg.Add(1)
-	grpcServer := grpc.NewServer()
+	grpcServer := grpc.NewServer(tc.ServerOptions...)
 	RegisterTestServer(grpcServer, &srv)
 	go grpcServer.Serve(tc.listener)
 }
@@ -266,5 +275,21 @@ func (s *notifyServer) Notify(_ context.Context, in *String) (*emptypb.Empty, er
 	if s.C != nil {
 		s.C <- in.Str
 	}
+	return &emptypb.Empty{}, nil
+}
+
+type sleepServer struct {
+	UnsafeSleepServer
+	Name string
+}
+
+func (s *sleepServer) Sleep(_ context.Context, in *SleepRequest) (*emptypb.Empty, error) {
+	if in.Filter != "" && s.Name != in.Filter {
+		fmt.Printf("%s: skipping due to filter\n", s.Name)
+		return &emptypb.Empty{}, nil
+	}
+	fmt.Printf("%s: sleeping for %s\n", s.Name, in.Duration)
+	time.Sleep(in.Duration.AsDuration())
+	fmt.Printf("%s: done sleeping\n", s.Name)
 	return &emptypb.Empty{}, nil
 }

@@ -91,14 +91,15 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	ctrlOptions.apply(opts...)
 	name := "spliced"
 	if ctrlOptions.name != "" {
-		name = "spliced-to:" + ctrlOptions.name
+		name = r.name + "->" + ctrlOptions.name
 	}
+	ctrlOptions.name = name
 	lg := r.logger.Named(name)
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	ctrl := NewStreamController(stream, WithLogger(lg))
+	ctrl := NewStreamController(stream, WithLogger(lg), WithStreamName(name))
 
 	r.controller.services.Range(func(key string, value *ServiceHandlerList) bool {
 		value.Range(func(sh *ServiceHandler) bool {
@@ -233,14 +234,12 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		ch <- err
 		return nil, ch
 	}
-
 	r.logger.With(
 		zap.Any("methods", info.MethodNames()),
 	).Debug("service discovery complete")
 
 	invoker := r.controller.NewInvoker()
 	for _, svcDesc := range info.Services {
-		r.controller.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), svcDesc, invoker))
 		for _, ctrl := range r.splicedControllers {
 			ctrl.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), svcDesc, invoker))
 		}

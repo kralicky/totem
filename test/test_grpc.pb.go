@@ -739,3 +739,89 @@ var Echo_ServiceDesc = grpc.ServiceDesc{
 	Streams:  []grpc.StreamDesc{},
 	Metadata: "github.com/kralicky/totem/test/test.proto",
 }
+
+// SleepClient is the client API for Sleep service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type SleepClient interface {
+	Sleep(ctx context.Context, in *SleepRequest, opts ...grpc.CallOption) (*emptypb.Empty, error)
+}
+
+type sleepClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewSleepClient(cc grpc.ClientConnInterface) SleepClient {
+	return &sleepClient{cc}
+}
+
+func (c *sleepClient) Sleep(ctx context.Context, in *SleepRequest, opts ...grpc.CallOption) (*emptypb.Empty, error) {
+	out := new(emptypb.Empty)
+	err := c.cc.Invoke(ctx, "/test.Sleep/Sleep", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// SleepServer is the server API for Sleep service.
+// All implementations must embed UnimplementedSleepServer
+// for forward compatibility
+type SleepServer interface {
+	Sleep(context.Context, *SleepRequest) (*emptypb.Empty, error)
+	mustEmbedUnimplementedSleepServer()
+}
+
+// UnimplementedSleepServer must be embedded to have forward compatible implementations.
+type UnimplementedSleepServer struct {
+}
+
+func (UnimplementedSleepServer) Sleep(context.Context, *SleepRequest) (*emptypb.Empty, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method Sleep not implemented")
+}
+func (UnimplementedSleepServer) mustEmbedUnimplementedSleepServer() {}
+
+// UnsafeSleepServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to SleepServer will
+// result in compilation errors.
+type UnsafeSleepServer interface {
+	mustEmbedUnimplementedSleepServer()
+}
+
+func RegisterSleepServer(s grpc.ServiceRegistrar, srv SleepServer) {
+	s.RegisterService(&Sleep_ServiceDesc, srv)
+}
+
+func _Sleep_Sleep_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SleepRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(SleepServer).Sleep(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/test.Sleep/Sleep",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(SleepServer).Sleep(ctx, req.(*SleepRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+// Sleep_ServiceDesc is the grpc.ServiceDesc for Sleep service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Sleep_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Sleep",
+	HandlerType: (*SleepServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "Sleep",
+			Handler:    _Sleep_Sleep_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "github.com/kralicky/totem/test/test.proto",
+}

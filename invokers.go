@@ -51,7 +51,10 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		zap.Uint64("tag", req.GetTag()),
 	).Debug("invoking method using local service")
 
-	attrs := []attribute.KeyValue{attribute.String("func", "localServiceInvoker.Invoke")}
+	attrs := []attribute.KeyValue{
+		attribute.String("func", "localServiceInvoker.Invoke"),
+		attribute.String("name", l.service.ServiceName),
+	}
 
 	ctx, span := Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
 		trace.WithAttributes(attrs...))

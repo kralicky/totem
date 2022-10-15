@@ -5,6 +5,8 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"errors"
+	"fmt"
+	sync "sync"
 	"time"
 
 	"github.com/kralicky/totem"
@@ -14,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/types/known/durationpb"
 )
 
 var (
@@ -466,9 +469,11 @@ var _ = Describe("Test", func() {
 		}
 	})
 	It("should handle QOS options", func() {
-		s1c := make(chan string, 1)
-		s2c := make(chan string, 1)
+		const numMsgs = 1e3
+		s1c := make(chan string, numMsgs)
+		s2c := make(chan string, numMsgs)
 		s1 := &testCase{
+			ServerOptions: defaultServerOpts,
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
 				ts, err := totem.NewServer(stream, totem.WithName("s1"))
 				if err != nil {
@@ -483,6 +488,7 @@ var _ = Describe("Test", func() {
 			},
 		}
 		s2 := &testCase{
+			ServerOptions: defaultServerOpts,
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
 				ts, err := totem.NewServer(stream, totem.WithName("s2"))
 				if err != nil {
@@ -500,6 +506,7 @@ var _ = Describe("Test", func() {
 		s2.AsyncRunServerOnly()
 
 		s3 := &testCase{
+			ServerOptions: defaultServerOpts,
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
 				ts, err := totem.NewServer(stream, totem.WithName("s3"))
 				if err != nil {
@@ -538,7 +545,9 @@ var _ = Describe("Test", func() {
 				}
 				cc, _ := tc.Serve()
 				notifyClient := test.NewNotifyClient(cc)
-				notifyClient.Notify(context.Background(), &test.String{Str: "hello"})
+				for i := 0; i < numMsgs; i++ {
+					notifyClient.Notify(context.Background(), &test.String{Str: fmt.Sprintf("msg%d", i)})
+				}
 				return nil
 			},
 		}
@@ -546,9 +555,142 @@ var _ = Describe("Test", func() {
 		done := make(chan struct{})
 		go s3.Run(done)
 
-		Eventually(s1c).Should(Receive(Equal("hello")))
-		Eventually(s2c).Should(Receive(Equal("hello")))
+		Eventually(s1c).Should(HaveLen(numMsgs))
+		Eventually(s2c).Should(HaveLen(numMsgs))
 		close(done)
+		for i := 0; i < numMsgs; i++ {
+			Expect(<-s1c).To(Equal(fmt.Sprintf("msg%d", i)))
+			Expect(<-s2c).To(Equal(fmt.Sprintf("msg%d", i)))
+		}
+		Consistently(s1c).Should(BeEmpty())
+		Consistently(s2c).Should(BeEmpty())
+	})
+	FIt("should ensure broadcast messages are reentrant", func() {
+		var a1, a2, s1 *testCase
+
+		/*
+			A1──┐
+					│
+					├───C1────S1
+					│
+			A2──┘
+
+		*/
+		a1 = &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("a1"))
+				if err != nil {
+					return err
+				}
+				test.RegisterSleepServer(ts, &sleepServer{
+					Name: "a1",
+				})
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+
+		a2 = &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("a2"))
+				if err != nil {
+					return err
+				}
+				test.RegisterSleepServer(ts, &sleepServer{
+					Name: "a2",
+				})
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+
+		// done := make(chan struct{})
+		s1 = &testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s1"))
+				if err != nil {
+					return err
+				}
+				{
+					a1Conn := a1.Dial()
+					a1Client := test.NewTestClient(a1Conn)
+					a1Stream, err := a1Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+
+					ts.Splice(a1Stream, totem.WithStreamName("a1"))
+				}
+
+				{
+					a2Conn := a2.Dial()
+					a2Client := test.NewTestClient(a2Conn)
+					a2Stream, err := a2Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+
+					ts.Splice(a2Stream, totem.WithStreamName("a2"))
+				}
+
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+
+		a1.AsyncRunServerOnly()
+		a2.AsyncRunServerOnly()
+		s1.AsyncRunServerOnly()
+
+		var sleepClient1, sleepClient2 test.SleepClient
+		{
+			s1Conn := s1.Dial()
+			s1Client := test.NewTestClient(s1Conn)
+			s1Stream, err := s1Client.TestStream(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			ts, err := totem.NewServer(s1Stream, totem.WithName("s1_client_1"))
+			Expect(err).NotTo(HaveOccurred())
+			cc, _ := ts.Serve()
+
+			sleepClient1 = test.NewSleepClient(cc)
+		}
+
+		{
+			s1Conn := s1.Dial()
+			s1Client := test.NewTestClient(s1Conn)
+			s1Stream, err := s1Client.TestStream(context.Background())
+			Expect(err).NotTo(HaveOccurred())
+			ts, err := totem.NewServer(s1Stream, totem.WithName("s1_client_2"))
+			Expect(err).NotTo(HaveOccurred())
+			cc, _ := ts.Serve()
+
+			sleepClient2 = test.NewSleepClient(cc)
+		}
+
+		time.Sleep(500 * time.Millisecond)
+		var wg sync.WaitGroup
+		wg.Add(2)
+		fmt.Println("starting")
+		ctx, span := totem.Tracer().Start(context.Background(), "sleep-test")
+		go func() {
+			defer wg.Done()
+			sleepClient1.Sleep(ctx, &test.SleepRequest{
+				Duration: durationpb.New(1 * time.Second),
+				Filter:   "a1",
+			})
+		}()
+		time.Sleep(500 * time.Millisecond)
+		span.AddEvent("2nd sleep")
+		go func() {
+			defer wg.Done()
+			sleepClient2.Sleep(ctx, &test.SleepRequest{
+				Duration: durationpb.New(1 * time.Second),
+				Filter:   "a2",
+			})
+		}()
+
+		wg.Wait()
+		span.End()
 	})
 })
 
