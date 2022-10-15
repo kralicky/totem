@@ -565,7 +565,7 @@ var _ = Describe("Test", func() {
 		Consistently(s1c).Should(BeEmpty())
 		Consistently(s2c).Should(BeEmpty())
 	})
-	FIt("should ensure broadcast messages are reentrant", func() {
+	It("should ensure broadcast messages are reentrant", func() {
 		var a1, a2, s1 *testCase
 
 		/*

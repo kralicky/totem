@@ -319,7 +319,13 @@ func (sh *StreamController) Run(ctx context.Context) error {
 									var err error
 									success := handlers.Range(func(sh *ServiceHandler) bool {
 										if invoker, ok := sh.MethodInvokers[method]; ok {
-											_, _ = invoker.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
+											_, _ = invoker.Invoke(addTotemToContext(ctx), &RPC{
+												Tag:         msg.Tag,
+												ServiceName: msg.ServiceName,
+												MethodName:  msg.MethodName,
+												Content:     msg.Content,
+												Metadata:    proto.Clone(msg.Metadata).(*MD),
+											})
 										} else {
 											span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found (broadcast)", method))
 											err = status.Errorf(codes.NotFound, "method %q not found (broadcast)", method)
@@ -340,10 +346,16 @@ func (sh *StreamController) Run(ctx context.Context) error {
 						}
 						if invoker, ok := first.MethodInvokers[method]; ok {
 							// Found a handler, call it
-							// very important to clone the message here, otherwise the tag
+							// very important to copy the message here, otherwise the tag
 							// will be overwritten, and we need to preserve it to reply to
 							// the original request
-							response, err := invoker.Invoke(addTotemToContext(ctx), proto.Clone(msg).(*RPC))
+							response, err := invoker.Invoke(addTotemToContext(ctx), &RPC{
+								Tag:         msg.Tag,
+								ServiceName: msg.ServiceName,
+								MethodName:  msg.MethodName,
+								Content:     msg.Content, // shallow copy
+								Metadata:    proto.Clone(msg.Metadata).(*MD),
+							})
 							if err != nil {
 								span.SetStatus(otelcodes.Error, err.Error())
 								sh.ReplyErr(ctx, msg.Tag, err)
