@@ -16,6 +16,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -171,6 +172,116 @@ var _ = Describe("Test", func() {
 			},
 		}
 		tc.Run(a, b)
+	})
+
+	It("should forward raw RPC messages", func() {
+		done := make(chan struct{})
+		tc := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+				incSrv := incrementServer{}
+				test.RegisterIncrementServer(ts, &incSrv)
+				_, errC := ts.Serve()
+
+				return <-errC
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+
+				cc, errC := ts.Serve()
+
+				reqBytes, _ := proto.Marshal(&test.Number{
+					Value: 1234,
+				})
+				req := &totem.RPC{
+					ServiceName: "test.Increment",
+					MethodName:  "Inc",
+					Content: &totem.RPC_Request{
+						Request: reqBytes,
+					},
+				}
+				reply := &totem.RPC{}
+
+				ctx, ca := context.WithTimeout(context.Background(), timeout)
+				defer ca()
+				err = cc.Invoke(ctx, totem.Forward, req, reply)
+				if err != nil {
+					return err
+				}
+
+				respValue := &test.Number{}
+				err = proto.Unmarshal(reply.GetResponse().GetResponse(), respValue)
+
+				if err != nil {
+					return err
+				}
+				if respValue.GetValue() != 1235 {
+					return fmt.Errorf("expected 1235, got %d", respValue.GetValue())
+				}
+
+				close(done)
+				return <-errC
+			},
+		}
+		tc.Run(done)
+	})
+
+	It("should forward raw RPCs and receive regular proto messages", func() {
+		done := make(chan struct{})
+		tc := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+				incSrv := incrementServer{}
+				test.RegisterIncrementServer(ts, &incSrv)
+				_, errC := ts.Serve()
+
+				return <-errC
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+
+				cc, errC := ts.Serve()
+
+				reqBytes, _ := proto.Marshal(&test.Number{
+					Value: 1234,
+				})
+				req := &totem.RPC{
+					ServiceName: "test.Increment",
+					MethodName:  "Inc",
+					Content: &totem.RPC_Request{
+						Request: reqBytes,
+					},
+				}
+				reply := &test.Number{}
+
+				ctx, ca := context.WithTimeout(context.Background(), timeout)
+				defer ca()
+				err = cc.Invoke(ctx, totem.Forward, req, reply)
+				if err != nil {
+					return err
+				}
+
+				if reply.GetValue() != 1235 {
+					return fmt.Errorf("expected 1235, got %d", reply.GetValue())
+				}
+
+				close(done)
+				return <-errC
+			},
+		}
+		tc.Run(done)
 	})
 
 	It("should correctly splice streams", func() {

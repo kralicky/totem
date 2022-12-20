@@ -97,7 +97,7 @@ func (tc *testCase) Run(until ...chan struct{}) {
 		testCase: tc,
 		wg:       sync.WaitGroup{},
 	}
-	srv.wg.Add(2)
+	srv.wg.Add(1)
 	grpcServer := grpc.NewServer(tc.ServerOptions...)
 	RegisterTestServer(grpcServer, &srv)
 	go grpcServer.Serve(tc.listener)
@@ -108,23 +108,24 @@ func (tc *testCase) Run(until ...chan struct{}) {
 	stream, err := client.TestStream(ctx)
 	Expect(err).NotTo(HaveOccurred())
 
+	done := make(chan struct{})
 	go func() {
-		defer GinkgoRecover()
-		defer srv.wg.Done()
-		err := tc.ClientHandler(stream)
-		Expect(err).To(Or(BeNil(), WithTransform(status.Code, Equal(codes.Canceled))))
+		defer close(done)
+		if len(until) > 0 {
+			for _, c := range until {
+				<-c
+			}
+			ca()
+			srv.wg.Wait()
+		} else {
+			srv.wg.Wait()
+			ca()
+		}
 	}()
 
-	if len(until) > 0 {
-		for _, c := range until {
-			<-c
-		}
-		ca()
-		srv.wg.Wait()
-	} else {
-		srv.wg.Wait()
-		ca()
-	}
+	err = tc.ClientHandler(stream)
+	Expect(status.Code(err)).To(Or(Equal(codes.Canceled), Equal(codes.OK)), "err: %v", err)
+	<-done
 }
 
 func (tc *testCase) RunServerOnly() {

@@ -21,40 +21,57 @@ type ClientConn struct {
 
 var _ grpc.ClientConnInterface = (*ClientConn)(nil)
 
+// Method placeholder to distinguish forwarded raw RPC messages.
+const Forward = "(forward)"
+
 func (cc *ClientConn) Invoke(
 	ctx context.Context,
 	method string,
-	req interface{},
-	reply interface{},
+	req any,
+	reply any,
 	callOpts ...grpc.CallOption,
 ) error {
-	reqMsg, err := proto.Marshal(req.(proto.Message))
-	if err != nil {
-		return err
-	}
-
-	cc.logger.With(
-		zap.String("method", method),
-		zap.String("requestType", fmt.Sprintf("%T", req)),
-		zap.String("replyType", fmt.Sprintf("%T", reply)),
-	).Debug("invoking method")
-
-	serviceName, methodName, err := parseQualifiedMethod(method)
-	if err != nil {
-		return err
-	}
-
-	rpc := &RPC{
-		ServiceName: serviceName,
-		MethodName:  methodName,
-		Content: &RPC_Request{
-			Request: reqMsg,
-		},
+	var serviceName, methodName string
+	if method != Forward {
+		var err error
+		serviceName, methodName, err = parseQualifiedMethod(method)
+		if err != nil {
+			return err
+		}
 	}
 
 	md, ok := metadata.FromOutgoingContext(ctx)
 	if !ok {
 		md = metadata.New(nil)
+	}
+
+	lg := cc.logger.With(
+		zap.String("requestType", fmt.Sprintf("%T", req)),
+		zap.String("replyType", fmt.Sprintf("%T", reply)),
+	)
+	var reqMsg []byte
+	switch req := req.(type) {
+	case *RPC:
+		serviceName = req.ServiceName
+		methodName = req.MethodName
+		lg.With(
+			zap.String("method", method),
+		).Debug("forwarding rpc")
+		reqMsg = req.GetRequest()
+		if req.Metadata != nil {
+			md = metadata.Join(md, req.Metadata.ToMD())
+		}
+	case proto.Message:
+		lg.With(
+			zap.String("method", method),
+		).Debug("invoking method")
+		var err error
+		reqMsg, err = proto.Marshal(req)
+		if err != nil {
+			return err
+		}
+	default:
+		panic(fmt.Sprintf("[totem] unsupported request type: %T", req))
 	}
 
 	name, attr := spanInfo(method, peerFromCtx(ctx))
@@ -65,7 +82,15 @@ func (cc *ClientConn) Invoke(
 	)
 	defer span.End()
 	otelgrpc.Inject(ctx, &md)
-	rpc.Metadata = FromMD(md)
+
+	rpc := &RPC{
+		ServiceName: serviceName,
+		MethodName:  methodName,
+		Content: &RPC_Request{
+			Request: reqMsg,
+		},
+		Metadata: FromMD(md),
+	}
 
 	future := cc.controller.Request(ctx, rpc)
 	select {
@@ -96,14 +121,24 @@ func (cc *ClientConn) Invoke(
 				*opt.TrailerAddr = rpc.Metadata.ToMD()
 			}
 		}
-		if err := proto.Unmarshal(resp.GetResponse(), reply.(proto.Message)); err != nil {
-			cc.logger.With(
-				zap.Uint64("tag", rpc.Tag),
-				zap.String("method", method),
-				zap.Error(err),
-			).Error("received malformed response message")
 
-			return fmt.Errorf("[totem] malformed response: %w", err)
+		switch reply := reply.(type) {
+		case *RPC:
+			reply.Content = &RPC_Response{
+				Response: resp,
+			}
+		case proto.Message:
+			if err := proto.Unmarshal(resp.GetResponse(), reply); err != nil {
+				cc.logger.With(
+					zap.Uint64("tag", rpc.Tag),
+					zap.String("method", method),
+					zap.Error(err),
+				).Error("received malformed response message")
+
+				return fmt.Errorf("[totem] malformed response: %w", err)
+			}
+		default:
+			panic(fmt.Sprintf("[totem] unsupported request type: %T", req))
 		}
 		return nil
 	case <-ctx.Done():
