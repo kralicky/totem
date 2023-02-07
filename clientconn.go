@@ -14,9 +14,10 @@ import (
 )
 
 type ClientConn struct {
-	controller *StreamController
-	tracer     trace.Tracer
-	logger     *zap.Logger
+	controller  *StreamController
+	interceptor grpc.UnaryClientInterceptor
+	tracer      trace.Tracer
+	logger      *zap.Logger
 }
 
 var _ grpc.ClientConnInterface = (*ClientConn)(nil)
@@ -29,6 +30,21 @@ func (cc *ClientConn) Invoke(
 	method string,
 	req any,
 	reply any,
+	callOpts ...grpc.CallOption,
+) error {
+	if cc.interceptor != nil {
+		// Important: the interceptor is called with a nil *grpc.ClientConn.
+		return cc.interceptor(ctx, method, req, reply, nil, cc.invoke, callOpts...)
+	}
+	return cc.invoke(ctx, method, req, reply, nil, callOpts...)
+}
+
+func (cc *ClientConn) invoke(
+	ctx context.Context,
+	method string,
+	req any,
+	reply any,
+	_ *grpc.ClientConn,
 	callOpts ...grpc.CallOption,
 ) error {
 	var serviceName, methodName string

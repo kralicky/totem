@@ -178,9 +178,37 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptor)))
 }
 
+type ServeOptions struct {
+	interceptor grpc.UnaryClientInterceptor
+}
+
+type ServeOption func(*ServeOptions)
+
+func (o *ServeOptions) apply(opts ...ServeOption) {
+	for _, op := range opts {
+		op(o)
+	}
+}
+
+// WithUnaryClientInterceptor sets a custom interceptor that will be used by
+// the [grpc.ClientConnInterface] returned by Serve.
+//
+// This interceptor functions similarly to a standard unary client interceptor,
+// with the one caveat that the [grpc.ClientConn] passed to the interceptor
+// will always be nil, and must not be used. The interceptor should still
+// forward the nil argument to the invoker for potential forward compatibility.
+func WithUnaryClientInterceptor(interceptor grpc.UnaryClientInterceptor) ServeOption {
+	return func(o *ServeOptions) {
+		o.interceptor = interceptor
+	}
+}
+
 // Serve starts the totem server, which takes control of the stream and begins
 // handling incoming and outgoing RPCs.
-func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
+func (r *Server) Serve(opts ...ServeOption) (grpc.ClientConnInterface, <-chan error) {
+	options := ServeOptions{}
+	options.apply(opts...)
+
 	r.logger.Debug("starting totem server")
 	r.lock.RLock()
 	ch := make(chan error, 2)
@@ -246,9 +274,10 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	}
 
 	return &ClientConn{
-		controller: r.controller,
-		tracer:     Tracer(),
-		logger:     r.logger.Named("cc"),
+		controller:  r.controller,
+		interceptor: options.interceptor,
+		tracer:      Tracer(),
+		logger:      r.logger.Named("cc"),
 	}, ch
 }
 

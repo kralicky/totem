@@ -803,6 +803,70 @@ var _ = Describe("Test", func() {
 		wg.Wait()
 		span.End()
 	})
+	It("should handle unary client interceptors", func() {
+		var serverInterceptorCalled, clientInterceptorCalled bool
+		a, b := make(chan struct{}), make(chan struct{})
+		tc := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+				incSrv := incrementServer{}
+				test.RegisterIncrementServer(ts, &incSrv)
+				cc, errC := ts.Serve(totem.WithUnaryClientInterceptor(
+					func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+						Expect(method).To(Equal("/test.Decrement/Dec"))
+						Expect(cc).To(BeNil())
+						Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(req.(*test.Number).Value).To(Equal(int64(0)))
+						err := invoker(ctx, method, req, reply, cc, opts...)
+						Expect(reply).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(reply.(*test.Number).Value).To(Equal(int64(-1)))
+						Expect(err).NotTo(HaveOccurred())
+						serverInterceptorCalled = true
+						return err
+					},
+				))
+
+				checkDecrement(cc)
+				close(a)
+
+				return <-errC
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				ts, err := totem.NewServer(stream)
+				if err != nil {
+					return err
+				}
+				decSrv := decrementServer{}
+				test.RegisterDecrementServer(ts, &decSrv)
+				cc, errC := ts.Serve(
+					totem.WithUnaryClientInterceptor(
+						func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+							Expect(method).To(Equal("/test.Increment/Inc"))
+							Expect(cc).To(BeNil())
+							Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
+							Expect(req.(*test.Number).Value).To(Equal(int64(0)))
+							err := invoker(ctx, method, req, reply, cc, opts...)
+							Expect(reply).To(BeAssignableToTypeOf(&test.Number{}))
+							Expect(reply.(*test.Number).Value).To(Equal(int64(1)))
+							Expect(err).NotTo(HaveOccurred())
+							clientInterceptorCalled = true
+							return err
+						},
+					))
+
+				checkIncrement(cc)
+				close(b)
+
+				return <-errC
+			},
+		}
+		tc.Run(a, b)
+		Expect(serverInterceptorCalled).To(BeTrue())
+		Expect(clientInterceptorCalled).To(BeTrue())
+	})
 })
 
 func checkIncrement(cc grpc.ClientConnInterface) {
