@@ -3,6 +3,8 @@ package totem
 import (
 	"context"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
@@ -24,6 +26,16 @@ const (
 
 func Tracer() trace.Tracer {
 	return otel.Tracer(TracerName)
+}
+
+// Controls whether or not tracing is enabled. Must only be set once at
+// startup. Defaults to false.
+var TracingEnabled = false
+
+func init() {
+	if v, err := strconv.ParseBool(os.Getenv("TOTEM_TRACING_ENABLED")); err == nil {
+		TracingEnabled = v
+	}
 }
 
 // internal helper methods from otelgrpc below
@@ -92,18 +104,27 @@ func statusCodeAttr(c codes.Code) attribute.KeyValue {
 }
 
 func recordErrorStatus(span trace.Span, stat *status.Status) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(stat.Code()))
 	span.SetStatus(otelcodes.Error, stat.Message())
 	span.RecordError(stat.Err())
 }
 
 func recordError(span trace.Span, err error) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(status.Code(err)))
 	span.SetStatus(otelcodes.Error, err.Error())
 	span.RecordError(err)
 }
 
 func recordSuccess(span trace.Span) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(codes.OK))
 }
 

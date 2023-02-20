@@ -61,18 +61,21 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using local service")
 
-	attrs := []attribute.KeyValue{
-		attribute.String("func", "localServiceInvoker.Invoke"),
-		attribute.String("name", l.service.ServiceName),
-	}
+	var span trace.Span
+	if TracingEnabled {
+		attrs := []attribute.KeyValue{
+			attribute.String("func", "localServiceInvoker.Invoke"),
+			attribute.String("name", l.service.ServiceName),
+		}
 
-	ctx, span := Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
-		trace.WithAttributes(attrs...))
-	defer span.End()
+		ctx, span = Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
+			trace.WithAttributes(attrs...))
+		defer span.End()
+	}
 
 	if m, ok := l.methods[req.MethodName]; ok {
 		startTime := time.Now()
-		resp, err := m.Handler(l.serviceImpl, addTotemToContext(ctx), func(v any) error {
+		resp, err := m.Handler(l.serviceImpl, ctx, func(v any) error {
 			reqBytes := req.GetRequest()
 			l.metrics.TrackRxBytes(serviceName, methodName, int64(len(reqBytes)))
 			return proto.Unmarshal(reqBytes, protoimpl.X.ProtoMessageV2Of(v))
@@ -129,14 +132,17 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
 
-	attrs := []attribute.KeyValue{
-		attribute.String("func", "streamControllerInvoker.Invoke"),
-		attribute.String("name", r.controller.name),
-	}
+	var span trace.Span
+	if TracingEnabled {
+		attrs := []attribute.KeyValue{
+			attribute.String("func", "streamControllerInvoker.Invoke"),
+			attribute.String("name", r.controller.name),
+		}
 
-	ctx, span := Tracer().Start(ctx, "Invoke/Stream: "+req.QualifiedMethodName(),
-		trace.WithAttributes(attrs...))
-	defer span.End()
+		ctx, span = Tracer().Start(ctx, "Invoke/Stream: "+req.QualifiedMethodName(),
+			trace.WithAttributes(attrs...))
+		defer span.End()
+	}
 
 	r.controller.metrics.TrackTxBytes(serviceName, methodName, int64(len(req.GetRequest())))
 	rc := r.controller.Request(ctx, req)

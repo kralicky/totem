@@ -68,10 +68,6 @@ type helloServer struct {
 // There is nothing special about the Hello implementation - it is just a
 // regular unary RPC.
 func (h *helloServer) Hello(ctx context.Context, req *HelloRequest) (*HelloResponse, error) {
-	// We can check if we're inside a Totem stream using the context:
-	if totem.CheckContext(ctx) {
-		// inside a Totem stream (not a real grpc server)
-	}
 	return &HelloResponse{
 		Message: "Hello, " + req.GetName(),
 	}, nil

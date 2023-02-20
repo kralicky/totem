@@ -165,11 +165,15 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 		}
 	}()
 
-	ctx, span := Tracer().Start(stream.Context(), "Server.Splice/Discovery",
-		trace.WithAttributes(
-			attribute.String("name", r.name),
-		),
-	)
+	ctx := stream.Context()
+	var span trace.Span
+	if TracingEnabled {
+		ctx, span = Tracer().Start(ctx, "Server.Splice/Discovery",
+			trace.WithAttributes(
+				attribute.String("name", r.name),
+			),
+		)
+	}
 	info, err := discoverServices(ctx, ctrl, r.discoveryHopLimit)
 	if err != nil {
 		err := fmt.Errorf("service discovery failed: %w", err)
@@ -177,7 +181,9 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 		span.SetStatus(otelcodes.Error, err.Error())
 		return err
 	}
-	span.End()
+	if TracingEnabled {
+		span.End()
+	}
 	r.logger.With(
 		zap.Any("methods", info.MethodNames()),
 	).Debug("splicing stream")
@@ -253,13 +259,19 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		ch <- runErr
 	}()
 
-	ctx, span := Tracer().Start(r.Context(), "Server.Serve/Discovery",
-		trace.WithAttributes(
-			attribute.String("name", r.name),
-		),
-	)
+	ctx := context.Background()
+	var span trace.Span
+	if TracingEnabled {
+		ctx, span = Tracer().Start(r.Context(), "Server.Serve/Discovery",
+			trace.WithAttributes(
+				attribute.String("name", r.name),
+			),
+		)
+	}
 	info, err := discoverServices(ctx, r.controller, r.discoveryHopLimit)
-	span.End()
+	if TracingEnabled {
+		span.End()
+	}
 
 	if err != nil {
 		r.controller.Kick(fmt.Errorf("service discovery failed: %w", err))

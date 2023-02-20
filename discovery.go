@@ -15,12 +15,15 @@ func discoverServices(ctx context.Context, ctrl *StreamController, maxHops int32
 		RemainingHops: maxHops,
 	})
 
-	ctx, span := Tracer().Start(ctx, "totem.discoverServices")
-	defer span.End()
-
-	lg := ctrl.logger.With(
-		zap.String("traceID", span.SpanContext().TraceID().String()),
-	)
+	lg := ctrl.logger
+	var span trace.Span
+	if TracingEnabled {
+		ctx, span = Tracer().Start(ctx, "totem.discoverServices")
+		defer span.End()
+		lg = lg.With(
+			zap.String("traceID", span.SpanContext().TraceID().String()),
+		)
+	}
 	lg.Debug("starting service discovery")
 
 	respC := ctrl.Request(ctx, &RPC{
@@ -47,9 +50,11 @@ func discoverServices(ctx context.Context, ctrl *StreamController, maxHops int32
 		return nil, err
 	}
 
-	span.AddEvent("Results", trace.WithAttributes(
-		attribute.StringSlice("methods", infoMsg.MethodNames()),
-	))
+	if TracingEnabled {
+		span.AddEvent("Results", trace.WithAttributes(
+			attribute.StringSlice("methods", infoMsg.MethodNames()),
+		))
+	}
 
 	lg.With(
 		zap.Any("methods", infoMsg.MethodNames()),
