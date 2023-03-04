@@ -49,6 +49,7 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		zap.String("service", req.GetServiceName()),
 		zap.String("method", req.GetMethodName()),
 		zap.Uint64("tag", req.GetTag()),
+		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using local service")
 
 	attrs := []attribute.KeyValue{
@@ -98,6 +99,7 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 		zap.String("service", req.GetServiceName()),
 		zap.String("method", req.GetMethodName()),
 		zap.Uint64("tag", req.GetTag()),
+		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using stream controller")
 
 	// convert the incoming context to an outgoing context

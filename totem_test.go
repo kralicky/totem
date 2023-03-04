@@ -15,6 +15,7 @@ import (
 	. "github.com/onsi/gomega"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/known/durationpb"
@@ -803,19 +804,14 @@ var _ = Describe("Test", func() {
 		wg.Wait()
 		span.End()
 	})
-	It("should handle unary client interceptors", func() {
-		var serverInterceptorCalled, clientInterceptorCalled bool
+	It("should invoke interceptors", func() {
+		var serverInterceptorOutgoingCalled, clientInterceptorOutgoingCalled int
+		var serverInterceptorIncomingCalled, clientInterceptorIncomingCalled int
 		a, b := make(chan struct{}), make(chan struct{})
 		tc := testCase{
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
-				ts, err := totem.NewServer(stream)
-				if err != nil {
-					return err
-				}
-				incSrv := incrementServer{}
-				test.RegisterIncrementServer(ts, &incSrv)
-				cc, errC := ts.Serve(totem.WithUnaryClientInterceptor(
-					func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+				ts, err := totem.NewServer(stream, totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
 						Expect(method).To(Equal("/test.Decrement/Dec"))
 						Expect(cc).To(BeNil())
 						Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
@@ -824,10 +820,27 @@ var _ = Describe("Test", func() {
 						Expect(reply).To(BeAssignableToTypeOf(&test.Number{}))
 						Expect(reply.(*test.Number).Value).To(Equal(int64(-1)))
 						Expect(err).NotTo(HaveOccurred())
-						serverInterceptorCalled = true
+						serverInterceptorOutgoingCalled++
 						return err
 					},
-				))
+					Incoming: func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+						Expect(info.FullMethod).To(Equal("/test.Increment/Inc"))
+						Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(req.(*test.Number).Value).To(Equal(int64(0)))
+						resp, err = handler(ctx, req)
+						Expect(resp).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(resp.(*test.Number).Value).To(Equal(int64(1)))
+						Expect(err).NotTo(HaveOccurred())
+						serverInterceptorIncomingCalled++
+						return resp, err
+					},
+				}))
+				if err != nil {
+					return err
+				}
+				incSrv := incrementServer{}
+				test.RegisterIncrementServer(ts, &incSrv)
+				cc, errC := ts.Serve()
 
 				checkDecrement(cc)
 				close(a)
@@ -835,27 +848,37 @@ var _ = Describe("Test", func() {
 				return <-errC
 			},
 			ClientHandler: func(stream test.Test_TestStreamClient) error {
-				ts, err := totem.NewServer(stream)
+				ts, err := totem.NewServer(stream, totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+						Expect(method).To(Equal("/test.Increment/Inc"))
+						Expect(cc).To(BeNil())
+						Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(req.(*test.Number).Value).To(Equal(int64(0)))
+						err := invoker(ctx, method, req, reply, cc, opts...)
+						Expect(reply).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(reply.(*test.Number).Value).To(Equal(int64(1)))
+						Expect(err).NotTo(HaveOccurred())
+						clientInterceptorOutgoingCalled++
+						return err
+					},
+					Incoming: func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+						Expect(info.FullMethod).To(Equal("/test.Decrement/Dec"))
+						Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(req.(*test.Number).Value).To(Equal(int64(0)))
+						resp, err = handler(ctx, req)
+						Expect(resp).To(BeAssignableToTypeOf(&test.Number{}))
+						Expect(resp.(*test.Number).Value).To(Equal(int64(-1)))
+						Expect(err).NotTo(HaveOccurred())
+						clientInterceptorIncomingCalled++
+						return resp, err
+					},
+				}))
 				if err != nil {
 					return err
 				}
 				decSrv := decrementServer{}
 				test.RegisterDecrementServer(ts, &decSrv)
-				cc, errC := ts.Serve(
-					totem.WithUnaryClientInterceptor(
-						func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
-							Expect(method).To(Equal("/test.Increment/Inc"))
-							Expect(cc).To(BeNil())
-							Expect(req).To(BeAssignableToTypeOf(&test.Number{}))
-							Expect(req.(*test.Number).Value).To(Equal(int64(0)))
-							err := invoker(ctx, method, req, reply, cc, opts...)
-							Expect(reply).To(BeAssignableToTypeOf(&test.Number{}))
-							Expect(reply.(*test.Number).Value).To(Equal(int64(1)))
-							Expect(err).NotTo(HaveOccurred())
-							clientInterceptorCalled = true
-							return err
-						},
-					))
+				cc, errC := ts.Serve()
 
 				checkIncrement(cc)
 				close(b)
@@ -864,14 +887,173 @@ var _ = Describe("Test", func() {
 			},
 		}
 		tc.Run(a, b)
-		Expect(serverInterceptorCalled).To(BeTrue())
-		Expect(clientInterceptorCalled).To(BeTrue())
+		Expect(serverInterceptorOutgoingCalled).To(Equal(1))
+		Expect(clientInterceptorOutgoingCalled).To(Equal(1))
+		Expect(serverInterceptorIncomingCalled).To(Equal(1))
+		Expect(clientInterceptorIncomingCalled).To(Equal(1))
+	})
+
+	It("should call interceptors correctly in spliced streams", func() {
+		type event struct {
+			name      string
+			direction string
+			method    string
+			md        metadata.MD
+		}
+		events := make(chan event, 100)
+		newOutgoing := func(name string) grpc.UnaryClientInterceptor {
+			return func(ctx context.Context, method string, req, reply interface{}, cc *grpc.ClientConn, invoker grpc.UnaryInvoker, opts ...grpc.CallOption) error {
+				md, _ := metadata.FromOutgoingContext(ctx)
+				md.Append("outgoing-md", name)
+				events <- event{
+					name:      name,
+					direction: "outgoing",
+					method:    method,
+					md:        md,
+				}
+				ctx = metadata.NewOutgoingContext(ctx, md)
+				return invoker(ctx, method, req, reply, cc, opts...)
+			}
+		}
+
+		newIncoming := func(name string) grpc.UnaryServerInterceptor {
+			return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+				md, _ := metadata.FromIncomingContext(ctx)
+				md.Append("incoming-md", name)
+				events <- event{
+					name:      name,
+					direction: "incoming",
+					method:    info.FullMethod,
+					md:        md,
+				}
+				ctx = metadata.NewIncomingContext(ctx, md)
+				return handler(ctx, req)
+			}
+		}
+		s1 := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s1"), totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: newOutgoing("s1"),
+					Incoming: newIncoming("s1"),
+				}))
+				if err != nil {
+					return err
+				}
+				incSrv := incrementServer{}
+				test.RegisterIncrementServer(ts, &incSrv)
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+		s2 := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("s2"), totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: newOutgoing("s2"),
+					Incoming: newIncoming("s2"),
+				}))
+				if err != nil {
+					return err
+				}
+				decSrv := decrementServer{}
+				test.RegisterDecrementServer(ts, &decSrv)
+				_, errC := ts.Serve()
+				return <-errC
+			},
+		}
+		wait := make(chan struct{})
+		done := make(chan struct{})
+		tc := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("tc"), totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: newOutgoing("tc"),
+					Incoming: newIncoming("tc"),
+				}))
+				if err != nil {
+					return err
+				}
+				hashSrv := hashServer{}
+				test.RegisterHashServer(ts, &hashSrv)
+
+				{
+					s1Conn := s1.Dial()
+					s1Client := test.NewTestClient(s1Conn)
+					s1Stream, err := s1Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+				}
+				{
+					s2Conn := s2.Dial()
+					s2Client := test.NewTestClient(s2Conn)
+					s2Stream, err := s2Client.TestStream(context.Background())
+					if err != nil {
+						return err
+					}
+
+					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+				}
+
+				close(wait)
+				_, errC := ts.Serve()
+				select {
+				case <-done:
+					return nil
+				case err := <-errC:
+					return err
+				}
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				<-wait
+				defer close(done)
+				ts, err := totem.NewServer(stream, totem.WithName("tc_client"), totem.WithInterceptors(totem.InterceptorConfig{
+					Outgoing: newOutgoing("tc_client"),
+					Incoming: newIncoming("tc_client"),
+				}))
+				if err != nil {
+					return err
+				}
+				cc, errC := ts.Serve()
+
+				go func() {
+					defer GinkgoRecover()
+					err := <-errC
+					Expect(err).To(Or(BeNil(), WithTransform(status.Code, Equal(codes.Canceled))))
+				}()
+
+				checkHash(cc)
+				checkDecrement(cc)
+				checkIncrement(cc)
+
+				return nil
+			},
+		}
+		go s1.RunServerOnly()
+		go s2.RunServerOnly()
+		tc.Run()
+		close(events)
+
+		entries := []event{}
+		for e := range events {
+			entries = append(entries, e)
+		}
+
+		type md = map[string][]string
+		Expect(entries).To(BeEquivalentTo([]event{
+			{"tc_client", "outgoing", "/test.Hash/Hash", md{"outgoing-md": {"tc_client"}, "test": {"hash"}}},
+			{"tc", "incoming", "/test.Hash/Hash", md{"incoming-md": {"tc"}, "outgoing-md": {"tc_client"}, "test": {"hash"}}},
+			{"tc_client", "outgoing", "/test.Decrement/Dec", md{"outgoing-md": {"tc_client"}, "test": {"decrement"}}},
+			{"s2", "incoming", "/test.Decrement/Dec", md{"incoming-md": {"s2"}, "outgoing-md": {"tc_client"}, "test": {"decrement"}}},
+			{"tc_client", "outgoing", "/test.Increment/Inc", md{"outgoing-md": {"tc_client"}, "test": {"increment"}}},
+			{"s1", "incoming", "/test.Increment/Inc", md{"incoming-md": {"s1"}, "outgoing-md": {"tc_client"}, "test": {"increment"}}},
+		}))
 	})
 })
 
 func checkIncrement(cc grpc.ClientConnInterface) {
 	incClient := test.NewIncrementClient(cc)
-	result, err := incClient.Inc(context.Background(), &test.Number{
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "increment")
+	result, err := incClient.Inc(ctx, &test.Number{
 		Value: 0,
 	})
 	Expect(err).NotTo(HaveOccurred())
@@ -880,7 +1062,8 @@ func checkIncrement(cc grpc.ClientConnInterface) {
 
 func checkDecrement(cc grpc.ClientConnInterface) {
 	decClient := test.NewDecrementClient(cc)
-	result, err := decClient.Dec(context.Background(), &test.Number{
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "decrement")
+	result, err := decClient.Dec(ctx, &test.Number{
 		Value: 0,
 	})
 	Expect(err).NotTo(HaveOccurred())
@@ -889,7 +1072,8 @@ func checkDecrement(cc grpc.ClientConnInterface) {
 
 func checkMultiply(cc grpc.ClientConnInterface) {
 	mulClient := test.NewMultiplyClient(cc)
-	result, err := mulClient.Mul(context.Background(), &test.Operands{
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "multiply")
+	result, err := mulClient.Mul(ctx, &test.Operands{
 		A: 2,
 		B: 3,
 	})
@@ -899,7 +1083,8 @@ func checkMultiply(cc grpc.ClientConnInterface) {
 
 func checkHash(cc grpc.ClientConnInterface) {
 	hashClient := test.NewHashClient(cc)
-	result, err := hashClient.Hash(context.Background(), &test.String{
+	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "hash")
+	result, err := hashClient.Hash(ctx, &test.String{
 		Str: "hello",
 	})
 	Expect(err).NotTo(HaveOccurred())

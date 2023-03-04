@@ -111,6 +111,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 		zap.String("service", m.GetServiceName()),
 		zap.String("method", m.GetMethodName()),
 		zap.String("type", fmt.Sprintf("%T", m.GetContent())),
+		zap.Strings("md", m.GetMetadata().Keys()),
 	)
 	lg.Debug("request")
 
@@ -267,12 +268,6 @@ func (sh *StreamController) Run(ctx context.Context) error {
 	sh.logger.Debug("stream controller running")
 	defer sh.logger.Debug("stream controller stopped")
 
-	streamMetadata, hasStreamMetadata := metadata.FromIncomingContext(ctx)
-	if hasStreamMetadata {
-		// delete the traceparent header from stream metadata to avoid parenting
-		// individual RPC traces to the stream trace
-		streamMetadata.Delete("traceparent")
-	}
 	var inflightRequests sync.WaitGroup
 	for {
 		msg, err := sh.receiver.Recv()
@@ -283,14 +278,10 @@ func (sh *StreamController) Run(ctx context.Context) error {
 			break
 		}
 		md := msg.Metadata.ToMD()
-		if hasStreamMetadata {
-			md = metadata.Join(streamMetadata, md)
-		}
 		ctx := metadata.NewIncomingContext(ctx, md)
 
 		b, sctx := otelgrpc.Extract(ctx, &md)
 		ctx = trace.ContextWithSpanContext(baggage.ContextWithBaggage(ctx, b), sctx)
-		msg.Metadata = nil
 
 		switch msg.Content.(type) {
 		case *RPC_Request:

@@ -36,3 +36,11 @@ func (md *MD) KV() []attribute.KeyValue {
 	}
 	return kv
 }
+
+func (md *MD) Keys() []string {
+	keys := make([]string, 0, len(md.GetData()))
+	for k := range md.GetData() {
+		keys = append(keys, k)
+	}
+	return keys
+}
