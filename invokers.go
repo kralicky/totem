@@ -1,15 +1,17 @@
 package totem
 
 import (
+	"context"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
+	protoimpl "google.golang.org/protobuf/runtime/protoimpl"
 )
 
 type MethodInvoker interface {
@@ -63,14 +65,14 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 
 	if m, ok := l.methods[req.MethodName]; ok {
 		resp, err := m.Handler(l.serviceImpl, addTotemToContext(ctx), func(v any) error {
-			return proto.Unmarshal(req.GetRequest(), v.(proto.Message))
+			return proto.Unmarshal(req.GetRequest(), protoimpl.X.ProtoMessageV2Of(v))
 		}, l.interceptor)
 		if err != nil {
 			recordError(span, err)
 			return nil, err
 		}
 		recordSuccess(span)
-		return proto.Marshal(resp.(proto.Message))
+		return proto.Marshal(protoimpl.X.ProtoMessageV2Of(resp))
 	} else {
 		err := status.Errorf(codes.Unimplemented, "unknown method %s", req.MethodName)
 		recordError(span, err)

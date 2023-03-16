@@ -1,10 +1,11 @@
 package totem
 
 import (
+	"context"
+
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 	"google.golang.org/protobuf/proto"
 )
 

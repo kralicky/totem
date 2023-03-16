@@ -1,10 +1,10 @@
 package totem
 
 import (
+	"context"
 	"sync"
 
 	"golang.org/x/exp/slices"
-	"golang.org/x/net/context"
 	grpc "google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"

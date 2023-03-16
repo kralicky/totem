@@ -1,6 +1,7 @@
 package totem
 
 import (
+	"context"
 	"net"
 	"strings"
 
@@ -10,7 +11,6 @@ import (
 	otelcodes "go.opentelemetry.io/otel/codes"
 	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 	"go.opentelemetry.io/otel/trace"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"

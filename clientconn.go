@@ -1,16 +1,17 @@
 package totem
 
 import (
+	"context"
 	"fmt"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
-	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/protoadapt"
 )
 
 type ClientConn struct {
@@ -77,12 +78,22 @@ func (cc *ClientConn) invoke(
 		if req.Metadata != nil {
 			md = metadata.Join(md, req.Metadata.ToMD())
 		}
-	case proto.Message:
+	case protoadapt.MessageV2:
 		lg.With(
 			zap.String("method", method),
 		).Debug("invoking method")
 		var err error
 		reqMsg, err = proto.Marshal(req)
+		if err != nil {
+			return err
+		}
+	case protoadapt.MessageV1:
+		reqv2 := protoadapt.MessageV2Of(req)
+		lg.With(
+			zap.String("method", method),
+		).Debug("invoking method")
+		var err error
+		reqMsg, err = proto.Marshal(reqv2)
 		if err != nil {
 			return err
 		}
@@ -143,8 +154,19 @@ func (cc *ClientConn) invoke(
 			reply.Content = &RPC_Response{
 				Response: resp,
 			}
-		case proto.Message:
+		case protoadapt.MessageV2:
 			if err := proto.Unmarshal(resp.GetResponse(), reply); err != nil {
+				cc.logger.With(
+					zap.Uint64("tag", rpc.Tag),
+					zap.String("method", method),
+					zap.Error(err),
+				).Error("received malformed response message")
+
+				return fmt.Errorf("[totem] malformed response: %w", err)
+			}
+		case protoadapt.MessageV1:
+			replyv2 := protoadapt.MessageV2Of(reply)
+			if err := proto.Unmarshal(resp.GetResponse(), replyv2); err != nil {
 				cc.logger.With(
 					zap.Uint64("tag", rpc.Tag),
 					zap.String("method", method),
