@@ -41,8 +41,9 @@ type StreamController struct {
 }
 
 type StreamControllerOptions struct {
-	name   string
-	logger *zap.Logger
+	metrics *MetricsExporter
+	name    string
+	logger  *zap.Logger
 }
 
 type StreamControllerOption func(*StreamControllerOptions)
@@ -62,6 +63,15 @@ func WithStreamName(name string) StreamControllerOption {
 func WithLogger(logger *zap.Logger) StreamControllerOption {
 	return func(o *StreamControllerOptions) {
 		o.logger = logger
+	}
+}
+
+// Rx/Tx metrics are tracked in the following places:
+// - For outgoing requests/incoming replies, in the clientconn.
+// - For incoming requests/outgoing replies, in the localServiceInvoker.
+func withMetricsExporter(exp *MetricsExporter) StreamControllerOption {
+	return func(o *StreamControllerOptions) {
+		o.metrics = exp
 	}
 }
 
@@ -89,7 +99,7 @@ func NewStreamController(stream Stream, options ...StreamControllerOption) *Stre
 		panic(err)
 	}
 	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
-		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil)))
+		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil, sh.metrics)))
 	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
 		desc, newStreamControllerInvoker(sh, sh.logger)))
 	return sh
@@ -106,11 +116,13 @@ func (sh *StreamController) RegisterServiceHandler(handler *ServiceHandler) {
 }
 
 func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
+	serviceName := m.GetServiceName()
+	methodName := m.GetMethodName()
+
 	lg := sh.logger.With(
 		zap.Uint64("tag", m.GetTag()),
-		zap.String("service", m.GetServiceName()),
-		zap.String("method", m.GetMethodName()),
-		zap.String("type", fmt.Sprintf("%T", m.GetContent())),
+		zap.String("service", serviceName),
+		zap.String("method", methodName),
 		zap.Strings("md", m.GetMetadata().Keys()),
 	)
 	lg.Debug("request")
@@ -277,6 +289,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 			}
 			break
 		}
+
 		md := msg.Metadata.ToMD()
 		ctx := metadata.NewIncomingContext(ctx, md)
 
@@ -287,6 +300,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		case *RPC_Request:
 			sh.logger.Debug("stream received RPC_Request")
 			inflightRequests.Add(1)
+
 			go func() {
 				defer inflightRequests.Done()
 				ctx, span := Tracer().Start(ctx, "RPC_Request: "+msg.QualifiedMethodName(),
@@ -295,6 +309,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 						attribute.String("name", sh.name),
 					),
 				)
+
 				defer span.End()
 				// Received a request from the client
 				svcName := msg.GetServiceName()
@@ -372,11 +387,13 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		case *RPC_Response:
 			sh.logger.Debug("stream received RPC_Response")
 			// Received a response from the server
+
 			future, ok := sh.pendingRPCs.LoadAndDelete(msg.Tag)
 			if !ok {
 				panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
 			}
 			future <- msg
+
 			close(future)
 		default:
 			return fmt.Errorf("invalid content type")

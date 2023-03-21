@@ -3,6 +3,7 @@ package totem
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel/attribute"
@@ -19,6 +20,7 @@ type ClientConn struct {
 	interceptor grpc.UnaryClientInterceptor
 	tracer      trace.Tracer
 	logger      *zap.Logger
+	metrics     *MetricsExporter
 }
 
 var _ grpc.ClientConnInterface = (*ClientConn)(nil)
@@ -110,6 +112,8 @@ func (cc *ClientConn) invoke(
 	defer span.End()
 	otelgrpc.Inject(ctx, &md)
 
+	cc.metrics.TrackTxBytes(serviceName, methodName, int64(len(reqMsg)))
+
 	rpc := &RPC{
 		ServiceName: serviceName,
 		MethodName:  methodName,
@@ -119,6 +123,7 @@ func (cc *ClientConn) invoke(
 		Metadata: FromMD(md),
 	}
 
+	startTime := time.Now()
 	future := cc.controller.Request(ctx, rpc)
 	select {
 	case rpc := <-future:
@@ -139,6 +144,8 @@ func (cc *ClientConn) invoke(
 			zap.String("method", method),
 		).Debug("received reply")
 		recordSuccess(span)
+		cc.metrics.TrackSvcTxLatency(serviceName, methodName, time.Since(startTime))
+		cc.metrics.TrackRxBytes(serviceName, methodName, int64(len(resp.Response)))
 
 		for _, callOpt := range callOpts {
 			switch opt := callOpt.(type) {

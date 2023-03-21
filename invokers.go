@@ -2,6 +2,7 @@ package totem
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -25,6 +26,7 @@ type localServiceInvoker struct {
 	methods     map[string]grpc.MethodDesc
 	logger      *zap.Logger
 	interceptor grpc.UnaryServerInterceptor
+	metrics     *MetricsExporter
 }
 
 func newLocalServiceInvoker(
@@ -32,6 +34,7 @@ func newLocalServiceInvoker(
 	service *grpc.ServiceDesc,
 	logger *zap.Logger,
 	interceptor grpc.UnaryServerInterceptor,
+	metrics *MetricsExporter,
 ) *localServiceInvoker {
 	handlers := make(map[string]grpc.MethodDesc)
 	for _, method := range service.Methods {
@@ -43,13 +46,17 @@ func newLocalServiceInvoker(
 		methods:     handlers,
 		logger:      logger,
 		interceptor: interceptor,
+		metrics:     metrics,
 	}
 }
 
 func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, error) {
+	serviceName := req.GetServiceName()
+	methodName := req.GetMethodName()
+
 	l.logger.With(
-		zap.String("service", req.GetServiceName()),
-		zap.String("method", req.GetMethodName()),
+		zap.String("service", serviceName),
+		zap.String("method", methodName),
 		zap.Uint64("tag", req.GetTag()),
 		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using local service")
@@ -64,15 +71,25 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 	defer span.End()
 
 	if m, ok := l.methods[req.MethodName]; ok {
+		startTime := time.Now()
 		resp, err := m.Handler(l.serviceImpl, addTotemToContext(ctx), func(v any) error {
-			return proto.Unmarshal(req.GetRequest(), protoimpl.X.ProtoMessageV2Of(v))
+			reqBytes := req.GetRequest()
+			l.metrics.TrackRxBytes(serviceName, methodName, int64(len(reqBytes)))
+			return proto.Unmarshal(reqBytes, protoimpl.X.ProtoMessageV2Of(v))
 		}, l.interceptor)
 		if err != nil {
 			recordError(span, err)
 			return nil, err
 		}
+		respBytes, err := proto.Marshal(protoimpl.X.ProtoMessageV2Of(resp))
+		if err != nil {
+			recordError(span, err)
+			return nil, err
+		}
 		recordSuccess(span)
-		return proto.Marshal(protoimpl.X.ProtoMessageV2Of(resp))
+		l.metrics.TrackSvcRxLatency(serviceName, methodName, time.Since(startTime))
+		l.metrics.TrackTxBytes(serviceName, methodName, int64(len(respBytes)))
+		return respBytes, nil
 	} else {
 		err := status.Errorf(codes.Unimplemented, "unknown method %s", req.MethodName)
 		recordError(span, err)
@@ -97,9 +114,11 @@ func newStreamControllerInvoker(ctrl *StreamController, logger *zap.Logger) *str
 }
 
 func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, error) {
+	serviceName := req.GetServiceName()
+	methodName := req.GetMethodName()
 	r.logger.With(
-		zap.String("service", req.GetServiceName()),
-		zap.String("method", req.GetMethodName()),
+		zap.String("service", serviceName),
+		zap.String("method", methodName),
 		zap.Uint64("tag", req.GetTag()),
 		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using stream controller")
@@ -119,6 +138,7 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 		trace.WithAttributes(attrs...))
 	defer span.End()
 
+	r.controller.metrics.TrackTxBytes(serviceName, methodName, int64(len(req.GetRequest())))
 	rc := r.controller.Request(ctx, req)
 	select {
 	case rpc := <-rc:
@@ -129,7 +149,7 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 			return nil, err
 		}
 		recordSuccess(span)
-
+		r.controller.metrics.TrackRxBytes(serviceName, methodName, int64(len(resp.Response)))
 		return resp.GetResponse(), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()

@@ -9,6 +9,7 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -29,6 +30,7 @@ type Server struct {
 type ServerOptions struct {
 	name         string
 	interceptors InterceptorConfig
+	metrics      *MetricsExporter
 }
 
 type InterceptorConfig struct {
@@ -53,6 +55,12 @@ func WithInterceptors(config InterceptorConfig) ServerOption {
 	}
 }
 
+func WithMetrics(reader metric.Reader, staticAttrs ...attribute.KeyValue) ServerOption {
+	return func(o *ServerOptions) {
+		o.metrics = NewMetricsExporter(reader, staticAttrs...)
+	}
+}
+
 type ServerOption func(*ServerOptions)
 
 func (o *ServerOptions) apply(opts ...ServerOption) {
@@ -73,7 +81,7 @@ func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 
 	lg := Log.Named(options.name)
 
-	ctrl := NewStreamController(stream, WithStreamName(options.name))
+	ctrl := NewStreamController(stream, WithStreamName(options.name), withMetricsExporter(options.metrics))
 
 	srv := &Server{
 		ServerOptions: options,
@@ -191,7 +199,7 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 	}
 
 	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), reflectionDesc,
-		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptors.Incoming)))
+		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptors.Incoming, r.metrics)))
 }
 
 // Serve starts the totem server, which takes control of the stream and begins
@@ -266,6 +274,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		interceptor: r.interceptors.Outgoing,
 		tracer:      Tracer(),
 		logger:      r.logger.Named("cc"),
+		metrics:     r.metrics,
 	}, ch
 }
 
