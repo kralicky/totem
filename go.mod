@@ -38,22 +38,24 @@ require (
 	github.com/golang/glog v1.1.0 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/go-cmp v0.5.9 // indirect
-	github.com/google/pprof v0.0.0-20210407192527-94a9f03dee38 // indirect
+	github.com/google/pprof v0.0.0-20230111200839-76d1ae5aea2b // indirect
 	github.com/iancoleman/strcase v0.2.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/kralicky/grpc-gateway/v2 v2.11.3 // indirect
+	github.com/kralicky/grpc-gateway/v2 v2.15.2 // indirect
 	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
 	github.com/mattn/go-isatty v0.0.17 // indirect
 	github.com/mattn/go-runewidth v0.0.14 // indirect
 	github.com/muesli/reflow v0.3.0 // indirect
 	github.com/muesli/termenv v0.15.1 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
-	github.com/rivo/uniseg v0.2.0 // indirect
+	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/rivo/uniseg v0.4.3 // indirect
 	github.com/samber/lo v1.37.0 // indirect
 	go.opentelemetry.io/contrib/propagators/aws v1.15.0 // indirect
 	go.opentelemetry.io/contrib/propagators/b3 v1.15.0 // indirect
 	go.opentelemetry.io/contrib/propagators/jaeger v1.15.0 // indirect
 	go.opentelemetry.io/contrib/propagators/ot v1.15.0 // indirect
+	go.uber.org/goleak v1.2.0 // indirect
 	go.uber.org/multierr v1.9.0 // indirect
 	golang.org/x/mod v0.9.0 // indirect
 	golang.org/x/net v0.8.0 // indirect

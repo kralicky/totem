@@ -9,9 +9,8 @@ import (
 
 	"github.com/google/uuid"
 	gsync "github.com/kralicky/gpkg/sync"
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	"go.opentelemetry.io/otel/baggage"
 	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
@@ -131,7 +130,8 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	if !ok {
 		md = metadata.New(nil)
 	}
-	otelgrpc.Inject(ctx, &md)
+	mdSupplier := metadataSupplier{&md}
+	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
 
 	m.Metadata = FromMD(md)
 
@@ -163,7 +163,8 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 	if !ok {
 		md = metadata.New(nil)
 	}
-	otelgrpc.Inject(ctx, &md)
+	mdSupplier := metadataSupplier{&md}
+	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
 
 	sh.sendLock.Lock()
 	err := sh.stream.Send(&RPC{
@@ -196,7 +197,8 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 	if !ok {
 		md = metadata.New(nil)
 	}
-	otelgrpc.Inject(ctx, &md)
+	mdSupplier := metadataSupplier{&md}
+	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
 
 	sh.sendLock.Lock()
 	err := sh.stream.Send(&RPC{
@@ -292,9 +294,8 @@ func (sh *StreamController) Run(ctx context.Context) error {
 
 		md := msg.Metadata.ToMD()
 		ctx := metadata.NewIncomingContext(ctx, md)
-
-		b, sctx := otelgrpc.Extract(ctx, &md)
-		ctx = trace.ContextWithSpanContext(baggage.ContextWithBaggage(ctx, b), sctx)
+		mdSupplier := metadataSupplier{&md}
+		ctx = otel.GetTextMapPropagator().Extract(ctx, &mdSupplier)
 
 		switch msg.Content.(type) {
 		case *RPC_Request:

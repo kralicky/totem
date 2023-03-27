@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
+	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
@@ -63,6 +63,7 @@ func (cc *ClientConn) invoke(
 	if !ok {
 		md = metadata.New(nil)
 	}
+	mdSupplier := metadataSupplier{&md}
 
 	lg := cc.logger.With(
 		zap.String("requestType", fmt.Sprintf("%T", req)),
@@ -110,7 +111,7 @@ func (cc *ClientConn) invoke(
 		trace.WithAttributes(attr...),
 	)
 	defer span.End()
-	otelgrpc.Inject(ctx, &md)
+	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
 
 	cc.metrics.TrackTxBytes(serviceName, methodName, int64(len(reqMsg)))
 

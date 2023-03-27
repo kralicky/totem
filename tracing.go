@@ -9,9 +9,11 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/propagation"
 	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/peer"
 	"google.golang.org/grpc/status"
 )
@@ -103,4 +105,33 @@ func recordError(span trace.Span, err error) {
 
 func recordSuccess(span trace.Span) {
 	span.SetAttributes(statusCodeAttr(codes.OK))
+}
+
+// unexported code copied from otelgrpc/metadata_supplier.go
+
+type metadataSupplier struct {
+	metadata *metadata.MD
+}
+
+// assert that metadataSupplier implements the TextMapCarrier interface.
+var _ propagation.TextMapCarrier = &metadataSupplier{}
+
+func (s *metadataSupplier) Get(key string) string {
+	values := s.metadata.Get(key)
+	if len(values) == 0 {
+		return ""
+	}
+	return values[0]
+}
+
+func (s *metadataSupplier) Set(key string, value string) {
+	s.metadata.Set(key, value)
+}
+
+func (s *metadataSupplier) Keys() []string {
+	out := make([]string, 0, len(*s.metadata))
+	for key := range *s.metadata {
+		out = append(out, key)
+	}
+	return out
 }
