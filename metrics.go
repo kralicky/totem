@@ -22,26 +22,7 @@ type MetricsExporter struct {
 	staticAttrs []attribute.KeyValue
 }
 
-// func (m *MetricsExporter) Inverted() *MetricsExporter {
-// 	if m == nil {
-// 		return nil
-// 	}
-// 	return &MetricsExporter{
-// 		rxBytesCollector: m.txBytesCollector,
-// 		txBytesCollector: m.rxBytesCollector,
-
-// 		rxRpcCollector: m.txRpcCollector,
-// 		txRpcCollector: m.rxRpcCollector,
-
-// 		svcRxLatencyCollector: m.svcRxLatencyCollector,
-// 		svcTxLatencyCollector: m.svcTxLatencyCollector,
-
-// 		staticAttrs: m.staticAttrs,
-// 	}
-// }
-
-func NewMetricsExporter(reader metric.Reader, staticAttrs ...attribute.KeyValue) *MetricsExporter {
-	provider := metric.NewMeterProvider(metric.WithReader(reader))
+func NewMetricsExporter(provider *metric.MeterProvider, staticAttrs ...attribute.KeyValue) *MetricsExporter {
 	meter := provider.Meter("github.com/kralicky/totem/metrics")
 
 	rxBytes, err := meter.Int64Counter("stream_receive_bytes",

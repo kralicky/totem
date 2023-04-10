@@ -55,9 +55,9 @@ func WithInterceptors(config InterceptorConfig) ServerOption {
 	}
 }
 
-func WithMetrics(reader metric.Reader, staticAttrs ...attribute.KeyValue) ServerOption {
+func WithMetrics(provider *metric.MeterProvider, staticAttrs ...attribute.KeyValue) ServerOption {
 	return func(o *ServerOptions) {
-		o.metrics = NewMetricsExporter(reader, staticAttrs...)
+		o.metrics = NewMetricsExporter(provider, staticAttrs...)
 	}
 }
 
@@ -164,8 +164,10 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 	info, err := discoverServices(ctx, ctrl)
 	if err != nil {
 		err := fmt.Errorf("service discovery failed: %w", err)
-		span.RecordError(err)
-		span.SetStatus(otelcodes.Error, err.Error())
+		if TracingEnabled {
+			span.RecordError(err)
+			span.SetStatus(otelcodes.Error, err.Error())
+		}
 		return err
 	}
 	span.End()
