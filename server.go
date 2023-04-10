@@ -55,9 +55,9 @@ func WithInterceptors(config InterceptorConfig) ServerOption {
 	}
 }
 
-func WithMetrics(reader metric.Reader, staticAttrs ...attribute.KeyValue) ServerOption {
+func WithMetrics(provider *metric.MeterProvider, staticAttrs ...attribute.KeyValue) ServerOption {
 	return func(o *ServerOptions) {
-		o.metrics = NewMetricsExporter(reader, staticAttrs...)
+		o.metrics = NewMetricsExporter(provider, staticAttrs...)
 	}
 }
 
