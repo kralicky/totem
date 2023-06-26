@@ -244,7 +244,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		ch <- runErr
 	}()
 
-	ctx, span := Tracer().Start(context.Background(), "Server.Serve/Discovery",
+	ctx, span := Tracer().Start(r.Context(), "Server.Serve/Discovery",
 		trace.WithAttributes(
 			attribute.String("name", r.name),
 		),
