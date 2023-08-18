@@ -28,9 +28,10 @@ type Server struct {
 }
 
 type ServerOptions struct {
-	name         string
-	interceptors InterceptorConfig
-	metrics      *MetricsExporter
+	name              string
+	interceptors      InterceptorConfig
+	metrics           *MetricsExporter
+	discoveryHopLimit int32
 }
 
 type InterceptorConfig struct {
@@ -61,6 +62,12 @@ func WithMetrics(provider *metric.MeterProvider, staticAttrs ...attribute.KeyVal
 	}
 }
 
+func WithDiscoveryHopLimit(limit int32) ServerOption {
+	return func(o *ServerOptions) {
+		o.discoveryHopLimit = limit
+	}
+}
+
 type ServerOption func(*ServerOptions)
 
 func (o *ServerOptions) apply(opts ...ServerOption) {
@@ -76,7 +83,9 @@ func WithName(name string) ServerOption {
 }
 
 func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
-	options := ServerOptions{}
+	options := ServerOptions{
+		discoveryHopLimit: -1,
+	}
 	options.apply(opts...)
 
 	lg := Log.Named(options.name)
@@ -161,7 +170,7 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 			attribute.String("name", r.name),
 		),
 	)
-	info, err := discoverServices(ctx, ctrl)
+	info, err := discoverServices(ctx, ctrl, r.discoveryHopLimit)
 	if err != nil {
 		err := fmt.Errorf("service discovery failed: %w", err)
 		span.RecordError(err)
@@ -249,7 +258,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 			attribute.String("name", r.name),
 		),
 	)
-	info, err := discoverServices(ctx, r.controller)
+	info, err := discoverServices(ctx, r.controller, r.discoveryHopLimit)
 	span.End()
 
 	if err != nil {

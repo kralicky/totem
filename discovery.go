@@ -9,11 +9,10 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func discoverServices(ctx context.Context, ctrl *StreamController) (*ServiceInfo, error) {
+func discoverServices(ctx context.Context, ctrl *StreamController, maxHops int32) (*ServiceInfo, error) {
 	reqBytes, _ := proto.Marshal(&DiscoveryRequest{
 		Initiator:     ctrl.uuid,
-		Visited:       []string{},
-		RemainingHops: -1,
+		RemainingHops: maxHops,
 	})
 
 	ctx, span := Tracer().Start(ctx, "totem.discoverServices")
