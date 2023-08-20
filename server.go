@@ -6,10 +6,11 @@ import (
 	"log"
 	"reflect"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
-	otelcodes "go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/sdk/metric"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
@@ -25,13 +26,18 @@ type Server struct {
 	controller         *StreamController
 	logger             *zap.Logger
 	splicedControllers []*StreamController
+	tracer             trace.Tracer
+
+	setupCtx  context.Context
+	setupSpan trace.Span
 }
 
 type ServerOptions struct {
 	name              string
+	discoveryHopLimit int32
 	interceptors      InterceptorConfig
 	metrics           *MetricsExporter
-	discoveryHopLimit int32
+	tracerOptions     []resource.Option
 }
 
 type InterceptorConfig struct {
@@ -59,6 +65,12 @@ func WithInterceptors(config InterceptorConfig) ServerOption {
 func WithMetrics(provider *metric.MeterProvider, staticAttrs ...attribute.KeyValue) ServerOption {
 	return func(o *ServerOptions) {
 		o.metrics = NewMetricsExporter(provider, staticAttrs...)
+	}
+}
+
+func WithTracerOptions(opts ...resource.Option) ServerOption {
+	return func(o *ServerOptions) {
+		o.tracerOptions = opts
 	}
 }
 
@@ -90,13 +102,28 @@ func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 
 	lg := Log.Named(options.name)
 
-	ctrl := NewStreamController(stream, WithStreamName(options.name), withMetricsExporter(options.metrics))
+	ctrl := NewStreamController(stream, StreamControllerOptions{
+		Logger:           lg,
+		Name:             options.name,
+		Metrics:          options.metrics,
+		WorkerPoolParams: DefaultWorkerPoolParams(),
+		TracerOptions:    options.tracerOptions,
+	})
+
+	tracer := TracerProvider(options.tracerOptions...).Tracer(TracerName)
+	setupCtx, span := tracer.Start(stream.Context(), "Stream Initialization",
+		trace.WithAttributes(attribute.String("name", options.name)),
+		trace.WithNewRoot(),
+	)
 
 	srv := &Server{
 		ServerOptions: options,
 		stream:        stream,
 		controller:    ctrl,
 		logger:        lg,
+		setupCtx:      setupCtx,
+		setupSpan:     span,
+		tracer:        tracer,
 	}
 
 	return srv, nil
@@ -119,24 +146,30 @@ func (r *Server) RegisterService(desc *grpc.ServiceDesc, impl interface{}) {
 // Splice configures this server to forward any incoming RPCs for the given
 // service(s) to a different totem stream.
 // The totem server will handle closing the spliced stream.
-func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
-	ctrlOptions := StreamControllerOptions{}
-	ctrlOptions.apply(opts...)
-	name := "spliced"
-	if ctrlOptions.name != "" {
-		name = r.name + "->" + ctrlOptions.name
+func (r *Server) Splice(stream Stream, opts ...ServerOption) error {
+	options := ServerOptions{
+		name:              r.name,
+		discoveryHopLimit: r.discoveryHopLimit,
+		metrics:           r.metrics,
+		tracerOptions:     r.tracerOptions,
 	}
-	ctrlOptions.name = name
-	lg := r.logger.Named(name)
+	options.apply(opts...)
 
 	r.lock.Lock()
 	defer r.lock.Unlock()
 
-	ctrl := NewStreamController(stream, WithLogger(lg), WithStreamName(name))
+	ctrl := NewStreamController(stream, StreamControllerOptions{
+		Logger:            r.logger,
+		Name:              options.name,
+		Metrics:           options.metrics,
+		WorkerPoolParams:  DefaultWorkerPoolParams(),
+		TracerOptions:     options.tracerOptions,
+		BaseTopologyFlags: TopologySpliced,
+	})
 
 	r.controller.services.Range(func(key string, value *ServiceHandlerList) bool {
 		value.Range(func(sh *ServiceHandler) bool {
-			if !sh.IsLocal {
+			if sh.TopologyFlags&TopologyLocal == 0 {
 				return true
 			}
 			if proto.HasExtension(sh.Descriptor.Options, E_Visibility) {
@@ -165,24 +198,12 @@ func (r *Server) Splice(stream Stream, opts ...StreamControllerOption) error {
 		}
 	}()
 
-	ctx := stream.Context()
-	var span trace.Span
-	if TracingEnabled {
-		ctx, span = Tracer().Start(ctx, "Server.Splice/Discovery",
-			trace.WithAttributes(
-				attribute.String("name", r.name),
-			),
-		)
-	}
-	info, err := discoverServices(ctx, ctrl, r.discoveryHopLimit)
+	info, err := discoverServices(r.setupCtx, ctrl, discoverOptions{
+		MaxHops: r.discoveryHopLimit,
+	})
 	if err != nil {
 		err := fmt.Errorf("service discovery failed: %w", err)
-		span.RecordError(err)
-		span.SetStatus(otelcodes.Error, err.Error())
 		return err
-	}
-	if TracingEnabled {
-		span.End()
 	}
 	r.logger.With(
 		zap.Any("methods", info.MethodNames()),
@@ -208,20 +229,29 @@ func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 		zap.String("service", serviceDesc.ServiceName),
 	).Debug("registering service")
 
+	if TracingEnabled {
+		r.setupSpan.AddEvent("Registering Local Service", trace.WithAttributes(
+			attribute.String("service", serviceDesc.ServiceName),
+		))
+	}
+
 	reflectionDesc, err := LoadServiceDesc(serviceDesc)
 	if err != nil {
 		log.Fatalf("totem: failed to load service descriptor: %v", err)
 	}
 
 	r.controller.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), reflectionDesc,
-		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptors.Incoming, r.metrics)))
+		newLocalServiceInvoker(impl, serviceDesc, r.logger, r.interceptors.Incoming, r.metrics, 0)))
 }
 
 // Serve starts the totem server, which takes control of the stream and begins
 // handling incoming and outgoing RPCs.
 func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
-	r.logger.Debug("starting totem server")
 	r.lock.RLock()
+	r.logger.Debug("starting totem server")
+	if TracingEnabled {
+		r.setupSpan.AddEvent("Starting Server")
+	}
 	ch := make(chan error, 2)
 
 	go func() {
@@ -259,41 +289,41 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		ch <- runErr
 	}()
 
-	ctx := context.Background()
-	var span trace.Span
-	if TracingEnabled {
-		ctx, span = Tracer().Start(r.Context(), "Server.Serve/Discovery",
-			trace.WithAttributes(
-				attribute.String("name", r.name),
-			),
-		)
-	}
-	info, err := discoverServices(ctx, r.controller, r.discoveryHopLimit)
-	if TracingEnabled {
-		span.End()
-	}
-
+	info, err := discoverServices(r.setupCtx, r.controller, discoverOptions{
+		MaxHops: int32(r.discoveryHopLimit),
+	})
 	if err != nil {
 		r.controller.Kick(fmt.Errorf("service discovery failed: %w", err))
 		r.controller.CloseOrRecv()
 		ch <- err
 		return nil, ch
 	}
+
 	r.logger.With(
 		zap.Any("methods", info.MethodNames()),
 	).Debug("service discovery complete")
 
+	r.setupSpan.AddEvent("Service Discovery Complete", trace.WithAttributes(
+		attribute.StringSlice("services", info.ServiceNames()),
+	))
+
 	invoker := r.controller.NewInvoker()
-	for _, svcDesc := range info.Services {
-		for _, ctrl := range r.splicedControllers {
+	for _, ctrl := range r.splicedControllers {
+		for _, svcDesc := range info.Services {
 			ctrl.RegisterServiceHandler(NewDefaultServiceHandler(r.Context(), svcDesc, invoker))
 		}
+		if TracingEnabled {
+			r.setupSpan.AddEvent("Syncing Spliced Controller", trace.WithAttributes(
+				attribute.String("controller", ctrl.Name),
+			))
+		}
 	}
+
+	r.setupSpan.End(trace.WithTimestamp(time.Now()))
 
 	return &ClientConn{
 		controller:  r.controller,
 		interceptor: r.interceptors.Outgoing,
-		tracer:      Tracer(),
 		logger:      r.logger.Named("cc"),
 		metrics:     r.metrics,
 	}, ch

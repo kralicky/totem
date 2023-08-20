@@ -2,6 +2,7 @@ package totem
 
 import (
 	"context"
+	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
@@ -9,16 +10,28 @@ import (
 	"google.golang.org/protobuf/proto"
 )
 
-func discoverServices(ctx context.Context, ctrl *StreamController, maxHops int32) (*ServiceInfo, error) {
+type discoverOptions struct {
+	MaxHops int32
+}
+
+func discoverServices(ctx context.Context, ctrl *StreamController, opts discoverOptions) (*ServiceInfo, error) {
 	reqBytes, _ := proto.Marshal(&DiscoveryRequest{
 		Initiator:     ctrl.uuid,
-		RemainingHops: maxHops,
+		Visited:       []string{ctrl.uuid},
+		RemainingHops: opts.MaxHops,
 	})
 
-	lg := ctrl.logger
+	lg := ctrl.Logger
 	var span trace.Span
 	if TracingEnabled {
-		ctx, span = Tracer().Start(ctx, "totem.discoverServices")
+		ctx, span = ctrl.tracer.Start(ctx, "Discovery",
+			trace.WithLinks(trace.LinkFromContext(ctrl.stream.Context())),
+			trace.WithAttributes(
+				attribute.String("initiator", ctrl.uuid),
+				attribute.String("name", ctrl.Name),
+				attribute.Int("maxHops", int(opts.MaxHops)),
+			),
+		)
 		defer span.End()
 		lg = lg.With(
 			zap.String("traceID", span.SpanContext().TraceID().String()),
@@ -51,13 +64,13 @@ func discoverServices(ctx context.Context, ctrl *StreamController, maxHops int32
 	}
 
 	if TracingEnabled {
-		span.AddEvent("Results", trace.WithAttributes(
-			attribute.StringSlice("methods", infoMsg.MethodNames()),
-		))
+		span.AddEvent("Completed", trace.WithAttributes(
+			attribute.StringSlice("services", infoMsg.ServiceNames()),
+		), trace.WithTimestamp(time.Now()))
 	}
 
 	lg.With(
-		zap.Any("methods", infoMsg.MethodNames()),
+		zap.Any("services", infoMsg.ServiceNames()),
 	).Debug("discovery complete")
 
 	return infoMsg, nil

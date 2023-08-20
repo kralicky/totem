@@ -42,7 +42,7 @@ func TestTotem(t *testing.T) {
 }
 
 var _ = BeforeSuite(func() {
-	if os.Getenv("TRACING_ENABLED") == "1" {
+	if os.Getenv("TOTEM_TRACING_ENABLED") == "1" {
 		res, err := resource.New(context.Background(),
 			resource.WithSchemaURL(semconv.SchemaURL),
 			resource.WithFromEnv(),

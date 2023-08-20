@@ -2,13 +2,39 @@ package totem
 
 import (
 	"context"
+	"strings"
 	"sync"
 
-	"golang.org/x/exp/slices"
+	"slices"
+
 	grpc "google.golang.org/grpc"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/types/descriptorpb"
 )
+
+type (
+	TopologyFlags int
+)
+
+const (
+	TopologyLocal TopologyFlags = 1 << iota
+	TopologySelf
+	TopologySpliced
+)
+
+func (tf TopologyFlags) DisplayName() string {
+	names := []string{"local", "self", "spliced"}
+	var flags []string
+	for i, name := range names {
+		if tf&(1<<i) != 0 {
+			flags = append(flags, name)
+		}
+	}
+	if tf&(TopologySelf|TopologyLocal) == 0 {
+		flags = append(flags, "remote")
+	}
+	return strings.Join(flags, "|")
+}
 
 type ServerStream interface {
 	Stream
@@ -31,7 +57,7 @@ type ServiceHandler struct {
 	Descriptor        *descriptorpb.ServiceDescriptorProto
 	MethodInvokers    map[string]MethodInvoker
 	MethodQOS         map[string]*QOS
-	IsLocal           bool
+	TopologyFlags     TopologyFlags
 }
 
 func (s *ServiceHandler) Done() <-chan struct{} {
@@ -48,7 +74,7 @@ func NewDefaultServiceHandler(
 		Descriptor:        descriptor,
 		MethodInvokers:    make(map[string]MethodInvoker),
 		MethodQOS:         make(map[string]*QOS),
-		IsLocal:           invoker.IsLocal(),
+		TopologyFlags:     invoker.TopologyFlags(),
 	}
 	for _, method := range descriptor.Method {
 		if proto.HasExtension(method.GetOptions(), E_Qos) {

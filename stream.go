@@ -8,16 +8,17 @@ import (
 	"sync"
 	"time"
 
+	"slices"
+
 	"github.com/alitto/pond"
 	"github.com/google/uuid"
 	gsync "github.com/kralicky/gpkg/sync"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -39,33 +40,33 @@ type StreamController struct {
 	services    gsync.Map[string, *ServiceHandlerList]
 	uuid        string
 	workerPool  *pond.WorkerPool
+	tracer      trace.Tracer
+}
+
+func DefaultWorkerPoolParams() WorkerPoolParameters {
+	return WorkerPoolParameters{
+		MaxWorkers:       100,
+		MaxCapacity:      1000,
+		ResizingStrategy: pond.Eager(),
+		IdleTimeout:      5 * time.Second,
+	}
 }
 
 type StreamControllerOptions struct {
-	metrics  *MetricsExporter
-	name     string
-	logger   *zap.Logger
-	wpParams WorkerPoolParameters
-}
+	Metrics *MetricsExporter
+	Name    string
+	Logger  *zap.Logger
 
-type StreamControllerOption func(*StreamControllerOptions)
+	// Rx/Tx metrics are tracked in the following places:
+	// - For outgoing requests/incoming replies, in the clientconn.
+	// - For incoming requests/outgoing replies, in the localServiceInvoker.
+	WorkerPoolParams WorkerPoolParameters
 
-func (o *StreamControllerOptions) apply(opts ...StreamControllerOption) {
-	for _, op := range opts {
-		op(o)
-	}
-}
+	// TracerOptions should contain service name/namespace keys if multiple
+	// services are running in the same process.
+	TracerOptions []resource.Option
 
-func WithStreamName(name string) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.name = name
-	}
-}
-
-func WithLogger(logger *zap.Logger) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.logger = logger
-	}
+	BaseTopologyFlags TopologyFlags
 }
 
 type WorkerPoolParameters struct {
@@ -76,38 +77,14 @@ type WorkerPoolParameters struct {
 	IdleTimeout      time.Duration
 }
 
-func WithWorkerPoolParameters(params WorkerPoolParameters) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.wpParams = params
-	}
-}
-
-// Rx/Tx metrics are tracked in the following places:
-// - For outgoing requests/incoming replies, in the clientconn.
-// - For incoming requests/outgoing replies, in the localServiceInvoker.
-func withMetricsExporter(exp *MetricsExporter) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.metrics = exp
-	}
-}
-
 // NewStreamController creates a new stream controller for the given stream and
 // method set.
 // There can be at most one stream controller per stream.
-func NewStreamController(stream Stream, options ...StreamControllerOption) *StreamController {
-	opts := StreamControllerOptions{
-		wpParams: WorkerPoolParameters{
-			MaxWorkers:       100,
-			MaxCapacity:      1000,
-			ResizingStrategy: pond.Eager(),
-			IdleTimeout:      5 * time.Second,
-		},
-	}
-	opts.apply(options...)
-	if opts.logger == nil {
-		opts.logger = Log.Named(opts.name)
+func NewStreamController(stream Stream, opts StreamControllerOptions) *StreamController {
+	if opts.Logger == nil {
+		opts.Logger = Log.Named(opts.Name)
 	} else {
-		opts.logger = opts.logger.Named(opts.name)
+		opts.Logger = opts.Logger.Named(opts.Name)
 	}
 
 	sh := &StreamController{
@@ -116,11 +93,12 @@ func NewStreamController(stream Stream, options ...StreamControllerOption) *Stre
 		count:                   atomic.NewUint64(0),
 		receiver:                newRecvWrapper(stream),
 		uuid:                    uuid.New().String(),
-		workerPool: pond.New(opts.wpParams.MaxWorkers, opts.wpParams.MaxCapacity,
+		tracer:                  TracerProvider(opts.TracerOptions...).Tracer("totem"),
+		workerPool: pond.New(opts.WorkerPoolParams.MaxWorkers, opts.WorkerPoolParams.MaxCapacity,
 			pond.Context(stream.Context()),
-			pond.Strategy(opts.wpParams.ResizingStrategy),
+			pond.Strategy(opts.WorkerPoolParams.ResizingStrategy),
 			pond.MinWorkers(1),
-			pond.IdleTimeout(opts.wpParams.IdleTimeout),
+			pond.IdleTimeout(opts.WorkerPoolParams.IdleTimeout),
 		),
 	}
 	desc, err := LoadServiceDesc(&ServerReflection_ServiceDesc)
@@ -128,15 +106,14 @@ func NewStreamController(stream Stream, options ...StreamControllerOption) *Stre
 		panic(err)
 	}
 	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
-		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil, sh.metrics)))
-	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
-		desc, newStreamControllerInvoker(sh, sh.logger)))
+		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.Logger, nil, sh.Metrics, opts.BaseTopologyFlags)))
+	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(), desc, sh.NewInvoker()))
 	return sh
 }
 
 func (sh *StreamController) RegisterServiceHandler(handler *ServiceHandler) {
 	name := handler.Descriptor.GetName()
-	sh.logger.With(
+	sh.Logger.With(
 		zap.String("service", name),
 	).Debug("registering service handler")
 
@@ -148,7 +125,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	serviceName := m.GetServiceName()
 	methodName := m.GetMethodName()
 
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", m.GetTag()),
 		zap.String("service", serviceName),
 		zap.String("method", methodName),
@@ -186,7 +163,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 }
 
 func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", tag),
 	)
 	lg.Debug("reply (success)")
@@ -221,7 +198,7 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 }
 
 func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply error) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", tag),
 		zap.Error(reply),
 	)
@@ -257,7 +234,7 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 }
 
 func (sh *StreamController) Kick(err error) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Error(err),
 	)
 	sh.kickOnce.Do(func() {
@@ -315,8 +292,8 @@ func init() {
 func (sh *StreamController) Run(ctx context.Context) error {
 	var streamErr error
 	sh.receiver.Start()
-	sh.logger.Debug("stream controller running")
-	defer sh.logger.Debug("stream controller stopped")
+	sh.Logger.Debug("stream controller running")
+	defer sh.Logger.Debug("stream controller stopped")
 
 	for {
 		msg, err := sh.receiver.Recv()
@@ -337,10 +314,10 @@ func (sh *StreamController) Run(ctx context.Context) error {
 
 		switch msg.Content.(type) {
 		case *RPC_Request:
-			sh.logger.Debug("stream received RPC_Request")
+			sh.Logger.Debug("stream received RPC_Request")
 			sh.workerPool.Submit(func() { sh.handleRequest(ctx, msg, md) })
 		case *RPC_Response:
-			sh.logger.Debug("stream received RPC_Response")
+			sh.Logger.Debug("stream received RPC_Response")
 			// Received a response from the server
 
 			future, ok := sh.pendingRPCs.LoadAndDelete(msg.Tag)
@@ -355,7 +332,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		}
 	}
 	sh.pendingRPCs.Range(func(tag uint64, future chan *RPC) bool {
-		sh.logger.With(
+		sh.Logger.With(
 			zap.Uint64("tag", tag),
 		).Debug("cancelling pending RPC")
 		future <- &RPC{
@@ -370,14 +347,14 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		sh.pendingRPCs.Delete(tag)
 		return true
 	})
-	sh.logger.Debug("waiting for any inflight requests to complete")
+	sh.Logger.Debug("waiting for any inflight requests to complete")
 	sh.workerPool.StopAndWait()
-	sh.logger.Debug("all requests complete; stopping stream controller")
+	sh.Logger.Debug("all requests complete; stopping stream controller")
 	return streamErr
 }
 
 func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequest) (*ServiceInfo, error) {
-	sh.logger.With(
+	sh.Logger.With(
 		zap.String("initiator", req.Initiator),
 		zap.Any("visited", req.Visited),
 		zap.Int("remainingHops", int(req.GetRemainingHops())),
@@ -385,9 +362,9 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 
 	var span trace.Span
 	if TracingEnabled {
-		ctx, span = Tracer().Start(ctx, "streamController.ListServices",
+		ctx, span = sh.tracer.Start(ctx, "ListServices",
 			trace.WithAttributes(
-				attribute.String("name", sh.name),
+				attribute.String("name", sh.Name),
 				attribute.String("initiator", req.Initiator),
 				attribute.StringSlice("visited", req.Visited),
 				attribute.Int("remainingHops", int(req.GetRemainingHops())),
@@ -425,11 +402,7 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 		return &ServiceInfo{}, nil
 	}
 
-	if req.Initiator == "" {
-		req.Initiator = sh.uuid
-	} else {
-		req.Visited = append(req.Visited, sh.uuid)
-	}
+	req.Visited = append(req.Visited, sh.uuid)
 	req.RemainingHops--
 
 	var services []*descriptorpb.ServiceDescriptorProto
@@ -443,23 +416,55 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 
 	if list, ok := sh.services.Load("totem.ServerReflection"); ok {
 		list.Range(func(handler *ServiceHandler) bool {
-			method, ok := handler.MethodInvokers["ListServices"]
+			invoker, ok := handler.MethodInvokers["ListServices"]
 			if !ok {
-				sh.logger.Warn("ServerReflection service does not have ListServices method")
+				sh.Logger.Warn("ServerReflection service does not have ListServices method")
 				return true
 			}
-			var span trace.Span
+			invokerFlags := invoker.TopologyFlags()
+
+			var attributes []attribute.KeyValue
 			if TracingEnabled {
-				ctx, span = Tracer().Start(ctx, "streamController.ListServices/Invoke",
-					trace.WithAttributes(
-						attribute.String("func", "streamController.ListServices/Invoke"),
-						attribute.String("name", sh.name),
-					),
-				)
-				defer span.End()
+				attributes = []attribute.KeyValue{
+					attribute.String("id", sh.uuid),
+					attribute.String("name", sh.Name),
+					attribute.String("initiator", req.Initiator),
+					attribute.StringSlice("visited", req.Visited),
+					attribute.Int("remainingHops", int(req.GetRemainingHops())),
+					attribute.String("handler", handler.Descriptor.GetName()),
+					attribute.String("handlerFlags", handler.TopologyFlags.DisplayName()),
+					attribute.String("invokerFlags", invokerFlags.DisplayName()),
+				}
 			}
+
+			if invokerFlags&TopologyLocal != 0 {
+				if TracingEnabled {
+					span.AddEvent("Skipping local", trace.WithAttributes(attributes...))
+				}
+				return true
+			}
+
+			// Skip if this is the same stream we received the request on, unless
+			// the request came from a stream spliced to this controller. In that case,
+			// because we are acting on behalf of the spliced client, our peer
+			// should not be treated as its direct peer.
+			// We can determine if the sender is one of our spliced clients by
+			// checking the topology flags. The controller context for spliced streams
+			// will be the same.
+			if invokerFlags&TopologySpliced == 0 ||
+				handler.controllerContext == sh.stream.Context() {
+				if TracingEnabled {
+					span.AddEvent("Skipping peer", trace.WithAttributes(attributes...))
+				}
+				return true
+			}
+
+			if TracingEnabled {
+				span.AddEvent("Sending ListServices", trace.WithAttributes(attributes...))
+			}
+
 			reqBytes, _ := proto.Marshal(req)
-			respData, err := method.Invoke(ctx, &RPC{
+			respData, err := invoker.Invoke(ctx, &RPC{
 				ServiceName: "totem.ServerReflection",
 				MethodName:  "ListServices",
 				Content: &RPC_Request{
@@ -467,14 +472,14 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 				},
 			})
 			if err != nil {
-				sh.logger.With(
+				sh.Logger.With(
 					zap.Error(err),
 				).Warn("error invoking ListServices")
 				return true
 			}
 			remoteInfo := &ServiceInfo{}
 			if err := proto.Unmarshal(respData, remoteInfo); err != nil {
-				sh.logger.With(
+				sh.Logger.With(
 					zap.Error(err),
 				).Warn("error unmarshaling ListServices response")
 				return true
@@ -497,28 +502,34 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 		}
 	}
 
+	if TracingEnabled {
+		keys := make([]string, 0, len(deduped))
+		for k := range deduped {
+			keys = append(keys, k)
+		}
+		span.AddEvent("Added Services", trace.WithAttributes(
+			attribute.StringSlice("services", keys),
+		))
+	}
+	values := []*descriptorpb.ServiceDescriptorProto{}
+	for _, svc := range deduped {
+		if TracingEnabled {
+		}
+		values = append(values, svc)
+	}
 	return &ServiceInfo{
-		Services: maps.Values(deduped),
+		Services: values,
 	}, nil
 }
 
-func (sh *StreamController) NewInvoker() MethodInvoker {
-	return &streamControllerInvoker{
-		controller: sh,
-		logger:     sh.logger,
-	}
+func (sh *StreamController) NewInvoker() *streamControllerInvoker {
+	return newStreamControllerInvoker(sh, sh.BaseTopologyFlags, sh.Logger)
 }
 
 func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md metadata.MD) {
-	var span trace.Span
+	span := trace.SpanFromContext(ctx)
 	if TracingEnabled {
-		ctx, span = Tracer().Start(ctx, "RPC_Request: "+msg.QualifiedMethodName(),
-			trace.WithAttributes(
-				attribute.String("func", "streamController.Run/RPC_Request"),
-				attribute.String("name", sh.name),
-			),
-		)
-		defer span.End()
+		span.AddEvent("Request: " + msg.QualifiedMethodName())
 	}
 	// Received a request from the client
 	svcName := msg.GetServiceName()
@@ -580,7 +591,7 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 	}
 
 	// No handler found
-	sh.logger.With(
+	sh.Logger.With(
 		zap.String("service", svcName),
 	).Debug("unknown service")
 	err := status.Errorf(codes.Unimplemented, "unknown service: %q", svcName)

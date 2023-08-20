@@ -11,7 +11,10 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
@@ -20,12 +23,42 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const (
-	TracerName = "totem"
-)
+const TracerName = "totem"
 
-func Tracer() trace.Tracer {
-	return otel.Tracer(TracerName)
+func TracerProvider(opts ...resource.Option) (_tp trace.TracerProvider) {
+	defer func() {
+		if _tp == nil {
+			_tp = otel.GetTracerProvider()
+		}
+	}()
+
+	if !TracingEnabled {
+		return nil
+	}
+
+	resourceOpts := []resource.Option{
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
+	}
+
+	var exporter tracesdk.SpanExporter
+
+	switch os.Getenv("OTEL_TRACES_EXPORTER") {
+	case "otlp":
+		var err error
+		exporter, err = otlptracegrpc.New(context.Background())
+		if err != nil {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	res, err := resource.New(context.Background(), append(resourceOpts, opts...)...)
+	if err != nil {
+		return nil
+	}
+	return tracesdk.NewTracerProvider(tracesdk.WithResource(res), tracesdk.WithBatcher(exporter))
 }
 
 // Controls whether or not tracing is enabled. Must only be set once at

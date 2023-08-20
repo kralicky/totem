@@ -18,7 +18,6 @@ import (
 type ClientConn struct {
 	controller  *StreamController
 	interceptor grpc.UnaryClientInterceptor
-	tracer      trace.Tracer
 	logger      *zap.Logger
 	metrics     *MetricsExporter
 }
@@ -108,7 +107,7 @@ func (cc *ClientConn) invoke(
 	if TracingEnabled {
 		name, attr := spanInfo(method, peerFromCtx(ctx))
 		attr = append(attr, attribute.String("func", "clientConn.Invoke"))
-		ctx, span = cc.tracer.Start(ctx, name,
+		ctx, span = cc.controller.tracer.Start(ctx, name,
 			trace.WithSpanKind(trace.SpanKindClient),
 			trace.WithAttributes(attr...),
 		)

@@ -328,7 +328,7 @@ var _ = Describe("Test", func() {
 					if err != nil {
 						return err
 					}
-					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+					ts.Splice(s1Stream, totem.WithName("s1"))
 				}
 				{
 					s2Conn := s2.Dial()
@@ -338,7 +338,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+					ts.Splice(s2Stream, totem.WithName("s2"))
 				}
 
 				close(wait)
@@ -406,7 +406,7 @@ var _ = Describe("Test", func() {
 					if err != nil {
 						return err
 					}
-					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+					ts.Splice(s1Stream, totem.WithName("s1"))
 				}
 
 				_, errC := ts.Serve()
@@ -432,7 +432,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+					ts.Splice(s2Stream, totem.WithName("s2"))
 				}
 
 				close(wait)
@@ -499,7 +499,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+					ts.Splice(s1Stream, totem.WithName("s1"))
 				}
 
 				_, errC := ts.Serve()
@@ -525,7 +525,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s4Stream, totem.WithStreamName("s4"))
+					ts.Splice(s4Stream, totem.WithName("s4"))
 				}
 
 				{
@@ -536,7 +536,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+					ts.Splice(s2Stream, totem.WithName("s2"))
 				}
 
 				_, errC := ts.Serve()
@@ -633,7 +633,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+					ts.Splice(s1Stream, totem.WithName("s1"))
 				}
 				{
 					s2Conn := s2.Dial()
@@ -643,7 +643,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+					ts.Splice(s2Stream, totem.WithName("s2"))
 				}
 
 				_, errC := ts.Serve()
@@ -731,7 +731,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(a1Stream, totem.WithStreamName("a1"))
+					ts.Splice(a1Stream, totem.WithName("a1"))
 				}
 
 				{
@@ -742,7 +742,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(a2Stream, totem.WithStreamName("a2"))
+					ts.Splice(a2Stream, totem.WithName("a2"))
 				}
 
 				_, errC := ts.Serve()
@@ -783,7 +783,7 @@ var _ = Describe("Test", func() {
 		var wg sync.WaitGroup
 		wg.Add(2)
 		fmt.Println("starting")
-		ctx, span := totem.Tracer().Start(context.Background(), "sleep-test")
+		ctx, span := totem.TracerProvider().Tracer(totem.TracerName).Start(context.Background(), "sleep-test")
 		go func() {
 			defer wg.Done()
 			sleepClient1.Sleep(ctx, &test.SleepRequest{
@@ -981,7 +981,7 @@ var _ = Describe("Test", func() {
 					if err != nil {
 						return err
 					}
-					ts.Splice(s1Stream, totem.WithStreamName("s1"))
+					ts.Splice(s1Stream, totem.WithName("s1"))
 				}
 				{
 					s2Conn := s2.Dial()
@@ -991,7 +991,7 @@ var _ = Describe("Test", func() {
 						return err
 					}
 
-					ts.Splice(s2Stream, totem.WithStreamName("s2"))
+					ts.Splice(s2Stream, totem.WithName("s2"))
 				}
 
 				close(wait)
