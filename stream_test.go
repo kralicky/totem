@@ -3,20 +3,25 @@ package totem_test
 import (
 	"context"
 	"fmt"
+	"math"
 	"math/rand"
 	"net"
+	"runtime"
 	sync "sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/kralicky/totem"
+	"github.com/kralicky/totem/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	"github.com/onsi/gomega/gmeasure/table"
 	"google.golang.org/grpc"
 	_ "google.golang.org/grpc/encoding/gzip"
+)
 
-	"github.com/kralicky/totem"
-	"github.com/kralicky/totem/test"
+const (
+	compareToDefaultUnary = false
 )
 
 type benchmarkParams struct {
@@ -27,18 +32,21 @@ type benchmarkParams struct {
 }
 
 var sizeOptions = map[string]func(*benchmarkParams){
-	"64b": func(p *benchmarkParams) {
-		p.payloadSize = 64
-	},
+	// "64b": func(p *benchmarkParams) {
+	// 	p.payloadSize = 64
+	// },
 	"128b": func(p *benchmarkParams) {
 		p.payloadSize = 128
 	},
 	"1kb": func(p *benchmarkParams) {
 		p.payloadSize = 1024
 	},
-	"10kb": func(p *benchmarkParams) {
-		p.payloadSize = 1024 * 10
-	},
+	// "10kb": func(p *benchmarkParams) {
+	// 	p.payloadSize = 1024 * 10
+	// },
+	// "25kb": func(p *benchmarkParams) {
+	// 	p.payloadSize = 1024 * 25
+	// },
 	"100kb": func(p *benchmarkParams) {
 		p.payloadSize = 1024 * 100
 	},
@@ -51,19 +59,43 @@ var parallelOptions = map[string]func(*benchmarkParams){
 	"1client": func(p *benchmarkParams) {
 		p.parallelClients = 1
 	},
-	// "10clients": func(p *benchmarkParams) {
-	// 	p.parallelClients = 10
+	// "5clients": func(p *benchmarkParams) {
+	// 	p.parallelClients = 5
+	// },
+	"10clients": func(p *benchmarkParams) {
+		p.parallelClients = 10
+	},
+	// "25clients": func(p *benchmarkParams) {
+	// 	p.parallelClients = 25
 	// },
 	"100clients": func(p *benchmarkParams) {
 		p.parallelClients = 100
 	},
-	"1000clients": func(p *benchmarkParams) {
-		p.parallelClients = 1000
-	},
+	// "1000clients": func(p *benchmarkParams) {
+	// 	p.parallelClients = 1000
+	// },
 }
 
 var grpcOptions = map[string]func(*benchmarkParams){
 	"default": func(p *benchmarkParams) {},
+	"options1": func(p *benchmarkParams) {
+		p.serverOptions = []grpc.ServerOption{
+			grpc.MaxRecvMsgSize(32 * 1024 * 1024), // 32MB
+			grpc.ReadBufferSize(0),
+			grpc.NumStreamWorkers(uint32(runtime.NumCPU())),
+			grpc.InitialConnWindowSize(64 * 1024 * 1024), // 64MB
+			grpc.InitialWindowSize(64 * 1024 * 1024),     // 64MB
+		}
+		p.clientOptions = []grpc.DialOption{
+			grpc.WithDefaultCallOptions(
+				grpc.WaitForReady(true),
+				grpc.MaxCallSendMsgSize(math.MaxInt32),
+				grpc.MaxCallRecvMsgSize(math.MaxInt32),
+			),
+			grpc.WithInitialConnWindowSize(1024 * 1024), // 1MB
+			grpc.WithInitialWindowSize(1024 * 1024),     // 1MB
+		}
+	},
 	// "unbuffered": func(p *benchmarkParams) {
 	// 	p.serverOptions = []grpc.ServerOption{grpc.WriteBufferSize(0), grpc.ReadBufferSize(0)}
 	// 	p.clientOptions = []grpc.DialOption{grpc.WithWriteBufferSize(0), grpc.WithReadBufferSize(0)}

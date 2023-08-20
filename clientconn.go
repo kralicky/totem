@@ -18,7 +18,6 @@ import (
 type ClientConn struct {
 	controller  *StreamController
 	interceptor grpc.UnaryClientInterceptor
-	tracer      trace.Tracer
 	logger      *zap.Logger
 	metrics     *MetricsExporter
 }
@@ -104,15 +103,17 @@ func (cc *ClientConn) invoke(
 		panic(fmt.Sprintf("[totem] unsupported request type: %T", req))
 	}
 
-	name, attr := spanInfo(method, peerFromCtx(ctx))
-	attr = append(attr, attribute.String("func", "clientConn.Invoke"))
-	ctx, span := cc.tracer.Start(ctx, name,
-		trace.WithSpanKind(trace.SpanKindClient),
-		trace.WithAttributes(attr...),
-	)
-	defer span.End()
-	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
-
+	var span trace.Span
+	if TracingEnabled {
+		name, attr := spanInfo(method, peerFromCtx(ctx))
+		attr = append(attr, attribute.String("func", "clientConn.Invoke"))
+		ctx, span = cc.controller.tracer.Start(ctx, name,
+			trace.WithSpanKind(trace.SpanKindClient),
+			trace.WithAttributes(attr...),
+		)
+		defer span.End()
+		otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	}
 	cc.metrics.TrackTxBytes(serviceName, methodName, int64(len(reqMsg)))
 
 	rpc := &RPC{

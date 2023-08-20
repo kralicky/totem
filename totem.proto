@@ -1,11 +1,12 @@
 syntax = "proto3";
-import "google/rpc/status.proto";
-import "google/protobuf/empty.proto";
-import "google/protobuf/descriptor.proto";
+package totem;
+
 import "github.com/kralicky/totem/extensions.proto";
+import "google/protobuf/descriptor.proto";
+import "google/protobuf/empty.proto";
+import "google/rpc/status.proto";
 
 option go_package = "github.com/kralicky/totem";
-package totem;
 
 service ServerReflection {
   option (totem.visibility) = {
@@ -16,18 +17,18 @@ service ServerReflection {
 }
 
 message RPC {
-  uint64 tag = 1;
+  uint64 tag         = 1;
   string serviceName = 2;
-  string methodName = 3;
+  string methodName  = 3;
   oneof content {
-    bytes request = 4;
+    bytes    request  = 4;
     Response response = 5;
   }
   MD metadata = 6;
 }
 
 message Response {
-  bytes response = 1;
+  bytes             response    = 1;
   google.rpc.Status statusProto = 2;
 }
 
@@ -40,9 +41,9 @@ message MDValues {
 }
 
 message DiscoveryRequest {
-  string initiator = 1;
-  repeated string visited = 2;
-  int32 remainingHops = 3;
+  string          initiator     = 1;
+  repeated string visited       = 2;
+  int32           remainingHops = 3;
 }
 
 message ServiceInfo {

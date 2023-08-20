@@ -3,13 +3,18 @@ package totem
 import (
 	"context"
 	"net"
+	"os"
+	"strconv"
 	"strings"
 
 	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/sdk/resource"
+	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 	"go.opentelemetry.io/otel/trace"
 	"google.golang.org/grpc/codes"
@@ -18,12 +23,52 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const (
-	TracerName = "totem"
-)
+const TracerName = "totem"
 
-func Tracer() trace.Tracer {
-	return otel.Tracer(TracerName)
+func TracerProvider(opts ...resource.Option) (_tp trace.TracerProvider) {
+	defer func() {
+		if _tp == nil {
+			_tp = otel.GetTracerProvider()
+		}
+	}()
+
+	if !TracingEnabled {
+		return nil
+	}
+
+	resourceOpts := []resource.Option{
+		resource.WithFromEnv(),
+		resource.WithTelemetrySDK(),
+	}
+
+	var exporter tracesdk.SpanExporter
+
+	switch os.Getenv("OTEL_TRACES_EXPORTER") {
+	case "otlp":
+		var err error
+		exporter, err = otlptracegrpc.New(context.Background())
+		if err != nil {
+			return nil
+		}
+	default:
+		return nil
+	}
+
+	res, err := resource.New(context.Background(), append(resourceOpts, opts...)...)
+	if err != nil {
+		return nil
+	}
+	return tracesdk.NewTracerProvider(tracesdk.WithResource(res), tracesdk.WithBatcher(exporter))
+}
+
+// Controls whether or not tracing is enabled. Must only be set once at
+// startup. Defaults to false.
+var TracingEnabled = false
+
+func init() {
+	if v, err := strconv.ParseBool(os.Getenv("TOTEM_TRACING_ENABLED")); err == nil {
+		TracingEnabled = v
+	}
 }
 
 // internal helper methods from otelgrpc below
@@ -92,18 +137,27 @@ func statusCodeAttr(c codes.Code) attribute.KeyValue {
 }
 
 func recordErrorStatus(span trace.Span, stat *status.Status) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(stat.Code()))
 	span.SetStatus(otelcodes.Error, stat.Message())
 	span.RecordError(stat.Err())
 }
 
 func recordError(span trace.Span, err error) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(status.Code(err)))
 	span.SetStatus(otelcodes.Error, err.Error())
 	span.RecordError(err)
 }
 
 func recordSuccess(span trace.Span) {
+	if !TracingEnabled {
+		return
+	}
 	span.SetAttributes(statusCodeAttr(codes.OK))
 }
 

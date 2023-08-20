@@ -34,6 +34,15 @@ func LoadServiceDesc(svc *grpc.ServiceDesc) (*descriptorpb.ServiceDescriptorProt
 	return dpb, nil
 }
 
+func (i *ServiceInfo) ServiceNames() []string {
+	var names []string
+	for _, svc := range i.GetServices() {
+		names = append(names, svc.GetName())
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (i *ServiceInfo) MethodNames() []string {
 	var names []string
 	for _, svc := range i.GetServices() {

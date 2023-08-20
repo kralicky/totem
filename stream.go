@@ -6,17 +6,19 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
+	"slices"
+
+	"github.com/alitto/pond"
 	"github.com/google/uuid"
 	gsync "github.com/kralicky/gpkg/sync"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
-	otelcodes "go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
-	"golang.org/x/exp/maps"
-	"golang.org/x/exp/slices"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -37,53 +39,52 @@ type StreamController struct {
 	kickOnce    sync.Once
 	services    gsync.Map[string, *ServiceHandlerList]
 	uuid        string
+	workerPool  *pond.WorkerPool
+	tracer      trace.Tracer
+}
+
+func DefaultWorkerPoolParams() WorkerPoolParameters {
+	return WorkerPoolParameters{
+		MaxWorkers:       100,
+		MaxCapacity:      1000,
+		ResizingStrategy: pond.Eager(),
+		IdleTimeout:      5 * time.Second,
+	}
 }
 
 type StreamControllerOptions struct {
-	metrics *MetricsExporter
-	name    string
-	logger  *zap.Logger
+	Metrics *MetricsExporter
+	Name    string
+	Logger  *zap.Logger
+
+	// Rx/Tx metrics are tracked in the following places:
+	// - For outgoing requests/incoming replies, in the clientconn.
+	// - For incoming requests/outgoing replies, in the localServiceInvoker.
+	WorkerPoolParams WorkerPoolParameters
+
+	// TracerOptions should contain service name/namespace keys if multiple
+	// services are running in the same process.
+	TracerOptions []resource.Option
+
+	BaseTopologyFlags TopologyFlags
 }
 
-type StreamControllerOption func(*StreamControllerOptions)
-
-func (o *StreamControllerOptions) apply(opts ...StreamControllerOption) {
-	for _, op := range opts {
-		op(o)
-	}
-}
-
-func WithStreamName(name string) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.name = name
-	}
-}
-
-func WithLogger(logger *zap.Logger) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.logger = logger
-	}
-}
-
-// Rx/Tx metrics are tracked in the following places:
-// - For outgoing requests/incoming replies, in the clientconn.
-// - For incoming requests/outgoing replies, in the localServiceInvoker.
-func withMetricsExporter(exp *MetricsExporter) StreamControllerOption {
-	return func(o *StreamControllerOptions) {
-		o.metrics = exp
-	}
+type WorkerPoolParameters struct {
+	MaxWorkers       int
+	MinWorkers       int
+	MaxCapacity      int
+	ResizingStrategy pond.ResizingStrategy
+	IdleTimeout      time.Duration
 }
 
 // NewStreamController creates a new stream controller for the given stream and
 // method set.
 // There can be at most one stream controller per stream.
-func NewStreamController(stream Stream, options ...StreamControllerOption) *StreamController {
-	opts := StreamControllerOptions{}
-	opts.apply(options...)
-	if opts.logger == nil {
-		opts.logger = Log.Named(opts.name)
+func NewStreamController(stream Stream, opts StreamControllerOptions) *StreamController {
+	if opts.Logger == nil {
+		opts.Logger = Log.Named(opts.Name)
 	} else {
-		opts.logger = opts.logger.Named(opts.name)
+		opts.Logger = opts.Logger.Named(opts.Name)
 	}
 
 	sh := &StreamController{
@@ -92,21 +93,27 @@ func NewStreamController(stream Stream, options ...StreamControllerOption) *Stre
 		count:                   atomic.NewUint64(0),
 		receiver:                newRecvWrapper(stream),
 		uuid:                    uuid.New().String(),
+		tracer:                  TracerProvider(opts.TracerOptions...).Tracer("totem"),
+		workerPool: pond.New(opts.WorkerPoolParams.MaxWorkers, opts.WorkerPoolParams.MaxCapacity,
+			pond.Context(stream.Context()),
+			pond.Strategy(opts.WorkerPoolParams.ResizingStrategy),
+			pond.MinWorkers(1),
+			pond.IdleTimeout(opts.WorkerPoolParams.IdleTimeout),
+		),
 	}
 	desc, err := LoadServiceDesc(&ServerReflection_ServiceDesc)
 	if err != nil {
 		panic(err)
 	}
 	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
-		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.logger, nil, sh.metrics)))
-	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(),
-		desc, newStreamControllerInvoker(sh, sh.logger)))
+		desc, newLocalServiceInvoker(sh, &ServerReflection_ServiceDesc, sh.Logger, nil, sh.Metrics, opts.BaseTopologyFlags)))
+	sh.RegisterServiceHandler(NewDefaultServiceHandler(stream.Context(), desc, sh.NewInvoker()))
 	return sh
 }
 
 func (sh *StreamController) RegisterServiceHandler(handler *ServiceHandler) {
 	name := handler.Descriptor.GetName()
-	sh.logger.With(
+	sh.Logger.With(
 		zap.String("service", name),
 	).Debug("registering service handler")
 
@@ -118,7 +125,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	serviceName := m.GetServiceName()
 	methodName := m.GetMethodName()
 
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", m.GetTag()),
 		zap.String("service", serviceName),
 		zap.String("method", methodName),
@@ -130,8 +137,10 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	if !ok {
 		md = metadata.New(nil)
 	}
-	mdSupplier := metadataSupplier{&md}
-	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	if TracingEnabled {
+		mdSupplier := metadataSupplier{&md}
+		otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	}
 
 	m.Metadata = FromMD(md)
 
@@ -154,7 +163,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 }
 
 func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", tag),
 	)
 	lg.Debug("reply (success)")
@@ -163,8 +172,10 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 	if !ok {
 		md = metadata.New(nil)
 	}
-	mdSupplier := metadataSupplier{&md}
-	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	if TracingEnabled {
+		mdSupplier := metadataSupplier{&md}
+		otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	}
 
 	sh.sendLock.Lock()
 	err := sh.stream.Send(&RPC{
@@ -187,7 +198,7 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 }
 
 func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply error) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Uint64("tag", tag),
 		zap.Error(reply),
 	)
@@ -197,8 +208,10 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 	if !ok {
 		md = metadata.New(nil)
 	}
-	mdSupplier := metadataSupplier{&md}
-	otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	if TracingEnabled {
+		mdSupplier := metadataSupplier{&md}
+		otel.GetTextMapPropagator().Inject(ctx, &mdSupplier)
+	}
 
 	sh.sendLock.Lock()
 	err := sh.stream.Send(&RPC{
@@ -221,7 +234,7 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 }
 
 func (sh *StreamController) Kick(err error) {
-	lg := sh.logger.With(
+	lg := sh.Logger.With(
 		zap.Error(err),
 	)
 	sh.kickOnce.Do(func() {
@@ -279,10 +292,9 @@ func init() {
 func (sh *StreamController) Run(ctx context.Context) error {
 	var streamErr error
 	sh.receiver.Start()
-	sh.logger.Debug("stream controller running")
-	defer sh.logger.Debug("stream controller stopped")
+	sh.Logger.Debug("stream controller running")
+	defer sh.Logger.Debug("stream controller stopped")
 
-	var inflightRequests sync.WaitGroup
 	for {
 		msg, err := sh.receiver.Recv()
 		if err != nil {
@@ -294,99 +306,18 @@ func (sh *StreamController) Run(ctx context.Context) error {
 
 		md := msg.Metadata.ToMD()
 		ctx := metadata.NewIncomingContext(ctx, md)
-		mdSupplier := metadataSupplier{&md}
-		ctx = otel.GetTextMapPropagator().Extract(ctx, &mdSupplier)
+
+		if TracingEnabled {
+			mdSupplier := metadataSupplier{&md}
+			ctx = otel.GetTextMapPropagator().Extract(ctx, &mdSupplier)
+		}
 
 		switch msg.Content.(type) {
 		case *RPC_Request:
-			sh.logger.Debug("stream received RPC_Request")
-			inflightRequests.Add(1)
-
-			go func() {
-				defer inflightRequests.Done()
-				ctx, span := Tracer().Start(ctx, "RPC_Request: "+msg.QualifiedMethodName(),
-					trace.WithAttributes(
-						attribute.String("func", "streamController.Run/RPC_Request"),
-						attribute.String("name", sh.name),
-					),
-				)
-
-				defer span.End()
-				// Received a request from the client
-				svcName := msg.GetServiceName()
-				if handlers, ok := sh.services.Load(svcName); ok && handlers.Len() > 0 {
-					if first := handlers.First(); first != nil {
-						method := msg.GetMethodName()
-						if handlers.Len() > 1 {
-							if qos, ok := first.MethodQOS[method]; ok {
-								switch qos.ReplicationStrategy {
-								case ReplicationStrategy_First:
-									// continue below
-								case ReplicationStrategy_Broadcast:
-									var err error
-									success := handlers.Range(func(sh *ServiceHandler) bool {
-										if invoker, ok := sh.MethodInvokers[method]; ok {
-											_, _ = invoker.Invoke(addTotemToContext(ctx), &RPC{
-												Tag:         msg.Tag,
-												ServiceName: msg.ServiceName,
-												MethodName:  msg.MethodName,
-												Content:     msg.Content,
-												Metadata:    proto.Clone(msg.Metadata).(*MD),
-											})
-										} else {
-											span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found (broadcast)", method))
-											err = status.Errorf(codes.NotFound, "method %q not found (broadcast)", method)
-											return false
-										}
-										return true
-									})
-									if success {
-										span.SetStatus(otelcodes.Ok, "")
-										sh.Reply(ctx, msg.Tag, emptyResponse)
-									} else {
-										span.SetStatus(otelcodes.Error, err.Error())
-										sh.ReplyErr(ctx, msg.Tag, err)
-									}
-									return
-								}
-							}
-						}
-						if invoker, ok := first.MethodInvokers[method]; ok {
-							// Found a handler, call it
-							// very important to copy the message here, otherwise the tag
-							// will be overwritten, and we need to preserve it to reply to
-							// the original request
-							response, err := invoker.Invoke(addTotemToContext(ctx), &RPC{
-								Tag:         msg.Tag,
-								ServiceName: msg.ServiceName,
-								MethodName:  msg.MethodName,
-								Content:     msg.Content, // shallow copy
-								Metadata:    proto.Clone(msg.Metadata).(*MD),
-							})
-							if err != nil {
-								span.SetStatus(otelcodes.Error, err.Error())
-								sh.ReplyErr(ctx, msg.Tag, err)
-								return
-							}
-							span.SetStatus(otelcodes.Ok, "")
-							sh.Reply(ctx, msg.Tag, response)
-						} else {
-							span.SetStatus(otelcodes.Error, fmt.Sprintf("method %q not found", method))
-							sh.ReplyErr(ctx, msg.Tag, status.Errorf(codes.NotFound, "method %q not found", method))
-						}
-						return
-					}
-				}
-
-				// No handler found
-				sh.logger.With(
-					zap.String("service", svcName),
-				).Debug("unknown service")
-				span.SetStatus(otelcodes.Error, "unknown service "+svcName)
-				sh.ReplyErr(ctx, msg.Tag, status.Error(codes.Unimplemented, "unknown service "+svcName))
-			}()
+			sh.Logger.Debug("stream received RPC_Request")
+			sh.workerPool.Submit(func() { sh.handleRequest(ctx, msg, md) })
 		case *RPC_Response:
-			sh.logger.Debug("stream received RPC_Response")
+			sh.Logger.Debug("stream received RPC_Response")
 			// Received a response from the server
 
 			future, ok := sh.pendingRPCs.LoadAndDelete(msg.Tag)
@@ -401,7 +332,7 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		}
 	}
 	sh.pendingRPCs.Range(func(tag uint64, future chan *RPC) bool {
-		sh.logger.With(
+		sh.Logger.With(
 			zap.Uint64("tag", tag),
 		).Debug("cancelling pending RPC")
 		future <- &RPC{
@@ -416,57 +347,62 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		sh.pendingRPCs.Delete(tag)
 		return true
 	})
-	sh.logger.Debug("waiting for any inflight requests to complete")
-	inflightRequests.Wait()
-	sh.logger.Debug("all requests complete; stopping stream controller")
+	sh.Logger.Debug("waiting for any inflight requests to complete")
+	sh.workerPool.StopAndWait()
+	sh.Logger.Debug("all requests complete; stopping stream controller")
 	return streamErr
 }
 
 func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequest) (*ServiceInfo, error) {
-	sh.logger.With(
+	sh.Logger.With(
 		zap.String("initiator", req.Initiator),
 		zap.Any("visited", req.Visited),
 		zap.Int("remainingHops", int(req.GetRemainingHops())),
 	).Debug("ListServices")
 
-	ctx, span := Tracer().Start(ctx, "streamController.ListServices",
-		trace.WithAttributes(
-			attribute.String("name", sh.name),
-			attribute.String("initiator", req.Initiator),
-			attribute.StringSlice("visited", req.Visited),
-			attribute.Int("remainingHops", int(req.GetRemainingHops())),
-		),
-	)
-	defer span.End()
+	var span trace.Span
+	if TracingEnabled {
+		ctx, span = sh.tracer.Start(ctx, "ListServices",
+			trace.WithAttributes(
+				attribute.String("name", sh.Name),
+				attribute.String("initiator", req.Initiator),
+				attribute.StringSlice("visited", req.Visited),
+				attribute.Int("remainingHops", int(req.GetRemainingHops())),
+			),
+		)
+		defer span.End()
+	}
 
 	// Exact comparison to 0 is intentional; setting RemainingHops to a negative
 	// number be used to disable the hop limit.
 	if req.RemainingHops == 0 {
-		span.AddEvent("DiscoveryStopped", trace.WithAttributes(
-			attribute.String("reason", "hop limit reached"),
-		))
+		if TracingEnabled {
+			span.AddEvent("DiscoveryStopped", trace.WithAttributes(
+				attribute.String("reason", "hop limit reached"),
+			))
+		}
 		return &ServiceInfo{}, nil
 	}
 	if req.Initiator == sh.uuid {
-		span.AddEvent("DiscoveryStopped", trace.WithAttributes(
-			attribute.String("reason", "visited self"),
-			attribute.String("id", sh.uuid),
-		))
+		if TracingEnabled {
+			span.AddEvent("DiscoveryStopped", trace.WithAttributes(
+				attribute.String("reason", "visited self"),
+				attribute.String("id", sh.uuid),
+			))
+		}
 		return &ServiceInfo{}, nil
 	}
 	if slices.Contains(req.Visited, sh.uuid) {
-		span.AddEvent("DiscoveryStopped", trace.WithAttributes(
-			attribute.String("reason", "already visited this node"),
-			attribute.String("id", sh.uuid),
-		))
+		if TracingEnabled {
+			span.AddEvent("DiscoveryStopped", trace.WithAttributes(
+				attribute.String("reason", "already visited this node"),
+				attribute.String("id", sh.uuid),
+			))
+		}
 		return &ServiceInfo{}, nil
 	}
 
-	if req.Initiator == "" {
-		req.Initiator = sh.uuid
-	} else {
-		req.Visited = append(req.Visited, sh.uuid)
-	}
+	req.Visited = append(req.Visited, sh.uuid)
 	req.RemainingHops--
 
 	var services []*descriptorpb.ServiceDescriptorProto
@@ -480,20 +416,55 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 
 	if list, ok := sh.services.Load("totem.ServerReflection"); ok {
 		list.Range(func(handler *ServiceHandler) bool {
-			method, ok := handler.MethodInvokers["ListServices"]
+			invoker, ok := handler.MethodInvokers["ListServices"]
 			if !ok {
-				sh.logger.Warn("ServerReflection service does not have ListServices method")
+				sh.Logger.Warn("ServerReflection service does not have ListServices method")
 				return true
 			}
-			ctx, span := Tracer().Start(ctx, "streamController.ListServices/Invoke",
-				trace.WithAttributes(
-					attribute.String("func", "streamController.ListServices/Invoke"),
-					attribute.String("name", sh.name),
-				),
-			)
-			defer span.End()
+			invokerFlags := invoker.TopologyFlags()
+
+			var attributes []attribute.KeyValue
+			if TracingEnabled {
+				attributes = []attribute.KeyValue{
+					attribute.String("id", sh.uuid),
+					attribute.String("name", sh.Name),
+					attribute.String("initiator", req.Initiator),
+					attribute.StringSlice("visited", req.Visited),
+					attribute.Int("remainingHops", int(req.GetRemainingHops())),
+					attribute.String("handler", handler.Descriptor.GetName()),
+					attribute.String("handlerFlags", handler.TopologyFlags.DisplayName()),
+					attribute.String("invokerFlags", invokerFlags.DisplayName()),
+				}
+			}
+
+			if invokerFlags&TopologyLocal != 0 {
+				if TracingEnabled {
+					span.AddEvent("Skipping local", trace.WithAttributes(attributes...))
+				}
+				return true
+			}
+
+			// Skip if this is the same stream we received the request on, unless
+			// the request came from a stream spliced to this controller. In that case,
+			// because we are acting on behalf of the spliced client, our peer
+			// should not be treated as its direct peer.
+			// We can determine if the sender is one of our spliced clients by
+			// checking the topology flags. The controller context for spliced streams
+			// will be the same.
+			if invokerFlags&TopologySpliced == 0 ||
+				handler.controllerContext == sh.stream.Context() {
+				if TracingEnabled {
+					span.AddEvent("Skipping peer", trace.WithAttributes(attributes...))
+				}
+				return true
+			}
+
+			if TracingEnabled {
+				span.AddEvent("Sending ListServices", trace.WithAttributes(attributes...))
+			}
+
 			reqBytes, _ := proto.Marshal(req)
-			respData, err := method.Invoke(ctx, &RPC{
+			respData, err := invoker.Invoke(ctx, &RPC{
 				ServiceName: "totem.ServerReflection",
 				MethodName:  "ListServices",
 				Content: &RPC_Request{
@@ -501,21 +472,23 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 				},
 			})
 			if err != nil {
-				sh.logger.With(
+				sh.Logger.With(
 					zap.Error(err),
 				).Warn("error invoking ListServices")
 				return true
 			}
 			remoteInfo := &ServiceInfo{}
 			if err := proto.Unmarshal(respData, remoteInfo); err != nil {
-				sh.logger.With(
+				sh.Logger.With(
 					zap.Error(err),
 				).Warn("error unmarshaling ListServices response")
 				return true
 			}
-			span.AddEvent("Results", trace.WithAttributes(
-				attribute.StringSlice("methods", remoteInfo.MethodNames()),
-			))
+			if TracingEnabled {
+				span.AddEvent("Results", trace.WithAttributes(
+					attribute.StringSlice("methods", remoteInfo.MethodNames()),
+				))
+			}
 			services = append(services, remoteInfo.Services...)
 			return true
 		})
@@ -529,14 +502,99 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 		}
 	}
 
+	if TracingEnabled {
+		keys := make([]string, 0, len(deduped))
+		for k := range deduped {
+			keys = append(keys, k)
+		}
+		span.AddEvent("Added Services", trace.WithAttributes(
+			attribute.StringSlice("services", keys),
+		))
+	}
+	values := []*descriptorpb.ServiceDescriptorProto{}
+	for _, svc := range deduped {
+		if TracingEnabled {
+		}
+		values = append(values, svc)
+	}
 	return &ServiceInfo{
-		Services: maps.Values(deduped),
+		Services: values,
 	}, nil
 }
 
-func (sh *StreamController) NewInvoker() MethodInvoker {
-	return &streamControllerInvoker{
-		controller: sh,
-		logger:     sh.logger,
+func (sh *StreamController) NewInvoker() *streamControllerInvoker {
+	return newStreamControllerInvoker(sh, sh.BaseTopologyFlags, sh.Logger)
+}
+
+func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md metadata.MD) {
+	span := trace.SpanFromContext(ctx)
+	if TracingEnabled {
+		span.AddEvent("Request: " + msg.QualifiedMethodName())
 	}
+	// Received a request from the client
+	svcName := msg.GetServiceName()
+	requestTag := msg.Tag
+	if handlers, ok := sh.services.Load(svcName); ok && handlers.Len() > 0 {
+		if first := handlers.First(); first != nil {
+			method := msg.GetMethodName()
+			if handlers.Len() > 1 {
+				if qos, ok := first.MethodQOS[method]; ok {
+					switch qos.ReplicationStrategy {
+					case ReplicationStrategy_First:
+						// continue below
+					case ReplicationStrategy_Broadcast:
+						var err error
+						success := handlers.Range(func(sh *ServiceHandler) bool {
+							if invoker, ok := sh.MethodInvokers[method]; ok {
+								_, _ = invoker.Invoke(ctx, msg)
+								msg.Tag = requestTag // restore the tag
+							} else {
+								err := status.Errorf(codes.NotFound, "method %q not found (broadcast)", method)
+								recordError(span, err)
+								return false
+							}
+							return true
+						})
+						if success {
+							recordSuccess(span)
+							sh.Reply(ctx, msg.Tag, emptyResponse)
+						} else {
+							recordError(span, err)
+							sh.ReplyErr(ctx, msg.Tag, err)
+						}
+						return
+					}
+				}
+			}
+			if invoker, ok := first.MethodInvokers[method]; ok {
+				// Found a handler, call it
+				// very important to copy the message here, otherwise the tag
+				// will be overwritten, and we need to preserve it to reply to
+				// the original request
+				//  todo: does the above still apply?
+				response, err := invoker.Invoke(ctx, msg)
+				msg.Tag = requestTag // restore the tag
+				if err != nil {
+					recordError(span, err)
+					sh.ReplyErr(ctx, msg.Tag, err)
+					return
+				}
+				recordSuccess(span)
+				sh.Reply(ctx, msg.Tag, response)
+			} else {
+				err := status.Errorf(codes.NotFound, "method %q not found", method)
+				recordError(span, err)
+				sh.ReplyErr(ctx, msg.Tag, err)
+			}
+			return
+		}
+	}
+
+	// No handler found
+	sh.Logger.With(
+		zap.String("service", svcName),
+	).Debug("unknown service")
+	err := status.Errorf(codes.Unimplemented, "unknown service: %q", svcName)
+	recordError(span, err)
+	sh.ReplyErr(ctx, msg.Tag, err)
 }

@@ -17,7 +17,7 @@ import (
 
 type MethodInvoker interface {
 	Invoke(ctx context.Context, rpc *RPC) ([]byte, error)
-	IsLocal() bool // todo: this identification could be improved
+	TopologyFlags() TopologyFlags
 }
 
 type localServiceInvoker struct {
@@ -27,6 +27,7 @@ type localServiceInvoker struct {
 	logger      *zap.Logger
 	interceptor grpc.UnaryServerInterceptor
 	metrics     *MetricsExporter
+	flags       TopologyFlags
 }
 
 func newLocalServiceInvoker(
@@ -35,6 +36,7 @@ func newLocalServiceInvoker(
 	logger *zap.Logger,
 	interceptor grpc.UnaryServerInterceptor,
 	metrics *MetricsExporter,
+	baseTopologyFlags TopologyFlags,
 ) *localServiceInvoker {
 	handlers := make(map[string]grpc.MethodDesc)
 	for _, method := range service.Methods {
@@ -47,6 +49,7 @@ func newLocalServiceInvoker(
 		logger:      logger,
 		interceptor: interceptor,
 		metrics:     metrics,
+		flags:       baseTopologyFlags | TopologyLocal,
 	}
 }
 
@@ -61,19 +64,14 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		zap.Strings("md", req.GetMetadata().Keys()),
 	).Debug("invoking method using local service")
 
-	attrs := []attribute.KeyValue{
-		attribute.String("func", "localServiceInvoker.Invoke"),
-		attribute.String("name", l.service.ServiceName),
-	}
-
-	ctx, span := Tracer().Start(ctx, "Invoke/Local: "+req.QualifiedMethodName(),
-		trace.WithAttributes(attrs...))
-	defer span.End()
+	span := trace.SpanFromContext(ctx)
 
 	if m, ok := l.methods[req.MethodName]; ok {
 		startTime := time.Now()
-		resp, err := m.Handler(l.serviceImpl, addTotemToContext(ctx), func(v any) error {
+		resp, err := m.Handler(l.serviceImpl, ctx, func(v any) error {
 			reqBytes := req.GetRequest()
+			span.AddEvent("Invoke/Local: "+req.QualifiedMethodName(),
+				trace.WithAttributes(attribute.Int("size", len(reqBytes))))
 			l.metrics.TrackRxBytes(serviceName, methodName, int64(len(reqBytes)))
 			return proto.Unmarshal(reqBytes, protoimpl.X.ProtoMessageV2Of(v))
 		}, l.interceptor)
@@ -97,19 +95,21 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 	}
 }
 
-func (l *localServiceInvoker) IsLocal() bool {
-	return true
+func (l *localServiceInvoker) TopologyFlags() TopologyFlags {
+	return l.flags
 }
 
 type streamControllerInvoker struct {
 	controller *StreamController
 	logger     *zap.Logger
+	flags      TopologyFlags
 }
 
-func newStreamControllerInvoker(ctrl *StreamController, logger *zap.Logger) *streamControllerInvoker {
+func newStreamControllerInvoker(ctrl *StreamController, flags TopologyFlags, logger *zap.Logger) *streamControllerInvoker {
 	return &streamControllerInvoker{
 		controller: ctrl,
 		logger:     logger,
+		flags:      flags,
 	}
 }
 
@@ -128,17 +128,13 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 	if ok {
 		ctx = metadata.NewOutgoingContext(ctx, md)
 	}
+	reqSize := len(req.GetRequest())
 
-	attrs := []attribute.KeyValue{
-		attribute.String("func", "streamControllerInvoker.Invoke"),
-		attribute.String("name", r.controller.name),
-	}
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent("Stream Request: "+req.QualifiedMethodName(),
+		trace.WithAttributes(attribute.Int("size", reqSize)))
 
-	ctx, span := Tracer().Start(ctx, "Invoke/Stream: "+req.QualifiedMethodName(),
-		trace.WithAttributes(attrs...))
-	defer span.End()
-
-	r.controller.metrics.TrackTxBytes(serviceName, methodName, int64(len(req.GetRequest())))
+	r.controller.Metrics.TrackTxBytes(serviceName, methodName, int64(reqSize))
 	rc := r.controller.Request(ctx, req)
 	select {
 	case rpc := <-rc:
@@ -149,13 +145,18 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 			return nil, err
 		}
 		recordSuccess(span)
-		r.controller.metrics.TrackRxBytes(serviceName, methodName, int64(len(resp.Response)))
+		span.AddEvent("Stream Response: "+req.QualifiedMethodName(),
+			trace.WithAttributes(
+				attribute.Int("size", len(resp.Response)),
+				attribute.Int("code", int(stat.Code())),
+			))
+		r.controller.Metrics.TrackRxBytes(serviceName, methodName, int64(len(resp.Response)))
 		return resp.GetResponse(), nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
 }
 
-func (r *streamControllerInvoker) IsLocal() bool {
-	return false
+func (r *streamControllerInvoker) TopologyFlags() TopologyFlags {
+	return r.flags
 }
