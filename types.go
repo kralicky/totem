@@ -60,10 +60,6 @@ type ServiceHandler struct {
 	TopologyFlags     TopologyFlags
 }
 
-func (s *ServiceHandler) Done() <-chan struct{} {
-	return s.controllerContext.Done()
-}
-
 func NewDefaultServiceHandler(
 	ctx context.Context,
 	descriptor *descriptorpb.ServiceDescriptorProto,
@@ -107,14 +103,13 @@ func (s *ServiceHandlerList) Append(sh *ServiceHandler) {
 
 	s.data = append(s.data, sh)
 
-	go func() {
-		<-sh.Done()
+	context.AfterFunc(sh.controllerContext, func() {
 		s.mu.Lock()
 		defer s.mu.Unlock()
 		if i := slices.Index(s.data, sh); i != -1 {
 			s.data = slices.Delete(s.data, i, i+1)
 		}
-	}()
+	})
 }
 
 func (s *ServiceHandlerList) Range(fn func(sh *ServiceHandler) bool) bool {
