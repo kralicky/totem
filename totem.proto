@@ -21,8 +21,9 @@ message RPC {
   string serviceName = 2;
   string methodName  = 3;
   oneof content {
-    bytes    request  = 4;
-    Response response = 5;
+    bytes               request         = 4;
+    Response            response        = 5;
+    ServerStreamMessage serverStreamMsg = 7;
   }
   MD metadata = 6;
 }
@@ -48,4 +49,11 @@ message DiscoveryRequest {
 
 message ServiceInfo {
   repeated google.protobuf.ServiceDescriptorProto services = 1;
+}
+
+message ServerStreamMessage {
+  // separate from rpc.metadata to disambiguate headers/trailers.
+  // in a nested stream, rpc.metadata is always trailers.
+  MD    headers  = 1;
+  bytes response = 2;
 }

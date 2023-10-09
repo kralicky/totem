@@ -14,6 +14,9 @@ func (md *MD) ToMD() metadata.MD {
 }
 
 func FromMD(md metadata.MD) *MD {
+	if md == nil {
+		return nil
+	}
 	m := MD{
 		Data: map[string]*MDValues{},
 	}

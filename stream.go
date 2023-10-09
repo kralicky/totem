@@ -233,6 +233,28 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 	}
 }
 
+func (sh *StreamController) StreamReply(tag uint64, msg *ServerStreamMessage) {
+	lg := sh.Logger.With(
+		zap.Uint64("tag", tag),
+	)
+	lg.Debug("reply (in stream)")
+
+	sh.sendLock.Lock()
+	err := sh.stream.Send(&RPC{
+		Tag: tag,
+		Content: &RPC_ServerStreamMsg{
+			ServerStreamMsg: msg,
+		},
+	})
+	sh.sendLock.Unlock()
+
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.Kick(err)
+		}
+	}
+}
+
 func (sh *StreamController) Kick(err error) {
 	lg := sh.Logger.With(
 		zap.Error(err),
@@ -327,6 +349,14 @@ func (sh *StreamController) Run(ctx context.Context) error {
 			future <- msg
 
 			close(future)
+		case *RPC_ServerStreamMsg:
+			sh.Logger.Debug("stream received RPC_ServerStreamMsg")
+			future, ok := sh.pendingRPCs.Load(msg.Tag)
+			if !ok {
+				panic(fmt.Sprintf("fatal: unexpected tag: %d", msg.Tag))
+			}
+			future <- msg
+			// leave the channel open, a message of this type is non-terminating
 		default:
 			return fmt.Errorf("invalid content type")
 		}
@@ -547,7 +577,6 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 						success := handlers.Range(func(sh *ServiceHandler) bool {
 							if invoker, ok := sh.MethodInvokers[method]; ok {
 								_, _ = invoker.Invoke(ctx, msg)
-								msg.Tag = requestTag // restore the tag
 							} else {
 								err := status.Errorf(codes.NotFound, "method %q not found (broadcast)", method)
 								recordError(span, err)
@@ -557,10 +586,10 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 						})
 						if success {
 							recordSuccess(span)
-							sh.Reply(ctx, msg.Tag, emptyResponse)
+							sh.Reply(ctx, requestTag, emptyResponse)
 						} else {
 							recordError(span, err)
-							sh.ReplyErr(ctx, msg.Tag, err)
+							sh.ReplyErr(ctx, requestTag, err)
 						}
 						return
 					}
@@ -568,23 +597,67 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 			}
 			if invoker, ok := first.MethodInvokers[method]; ok {
 				// Found a handler, call it
-				// very important to copy the message here, otherwise the tag
-				// will be overwritten, and we need to preserve it to reply to
-				// the original request
-				//  todo: does the above still apply?
-				response, err := invoker.Invoke(ctx, msg)
-				msg.Tag = requestTag // restore the tag
-				if err != nil {
-					recordError(span, err)
-					sh.ReplyErr(ctx, msg.Tag, err)
-					return
+				info := first.MethodInfo[method]
+				switch {
+				case !info.IsServerStream && !info.IsClientStream:
+					// very important to copy the message here, otherwise the tag
+					// will be overwritten, and we need to preserve it to reply to
+					// the original request
+					//  todo: does the above still apply?
+					response, err := invoker.Invoke(ctx, msg)
+					if err != nil {
+						recordError(span, err)
+						sh.ReplyErr(ctx, requestTag, err)
+						return
+					}
+					recordSuccess(span)
+					sh.Reply(ctx, requestTag, response)
+				case info.IsServerStream && !info.IsClientStream:
+					responseCC := make(chan chan<- *RPC, 1)
+					responseC := make(chan *RPC, 1)
+					responseCC <- responseC
+					err := invoker.InvokeStream(ctx, msg, responseCC)
+					if err != nil {
+						recordError(span, err)
+						sh.ReplyErr(ctx, requestTag, err)
+						return
+					}
+					var exitResponse *RPC
+					for {
+						select {
+						case <-ctx.Done():
+							recordError(span, ctx.Err())
+							return
+						case response, ok := <-responseC:
+							if !ok {
+								// stream closed
+								if exitResponse != nil {
+									stat := exitResponse.GetResponse().GetStatus()
+									if stat.Code() != codes.OK {
+										recordError(span, stat.Err())
+										// replace any outgoing metadata with the trailers from the last response
+										sh.ReplyErr(metadata.NewOutgoingContext(ctx, exitResponse.GetMetadata().ToMD()), requestTag, stat.Err())
+										return
+									}
+									recordSuccess(span)
+									sh.Reply(metadata.NewOutgoingContext(ctx, exitResponse.GetMetadata().ToMD()), requestTag, exitResponse.GetResponse().GetResponse())
+								}
+								return
+							}
+							switch response.Content.(type) {
+							case *RPC_Response:
+								exitResponse = response
+								// continue and wait for responseC to be closed by the handler
+							case *RPC_ServerStreamMsg:
+								sh.StreamReply(requestTag, response.GetServerStreamMsg())
+							}
+						}
+					}
 				}
-				recordSuccess(span)
-				sh.Reply(ctx, msg.Tag, response)
 			} else {
 				err := status.Errorf(codes.NotFound, "method %q not found", method)
 				recordError(span, err)
-				sh.ReplyErr(ctx, msg.Tag, err)
+				sh.ReplyErr(ctx, requestTag, err)
 			}
 			return
 		}
@@ -596,5 +669,5 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 	).Debug("unknown service")
 	err := status.Errorf(codes.Unimplemented, "unknown service: %q", svcName)
 	recordError(span, err)
-	sh.ReplyErr(ctx, msg.Tag, err)
+	sh.ReplyErr(ctx, requestTag, err)
 }

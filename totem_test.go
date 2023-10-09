@@ -1048,6 +1048,48 @@ var _ = Describe("Test", func() {
 			{"s1", "incoming", "/test.Increment/Inc", md{"incoming-md": {"s1"}, "outgoing-md": {"tc_client"}, "test": {"increment"}}},
 		}))
 	})
+	It("should handle nested server-streaming RPCs", func() {
+		done := make(chan struct{})
+		tc := testCase{
+			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				ts, err := totem.NewServer(stream, totem.WithName("tc"))
+				if err != nil {
+					return err
+				}
+				countSrv := &countServer{}
+				test.RegisterCountServer(ts, countSrv)
+				_, errC := ts.Serve()
+				select {
+				case <-done:
+					return nil
+				case err := <-errC:
+					return err
+				}
+			},
+			ClientHandler: func(stream test.Test_TestStreamClient) error {
+				defer close(done)
+				ts, err := totem.NewServer(stream, totem.WithName("tc_client"))
+				if err != nil {
+					return err
+				}
+				cc, _ := ts.Serve()
+
+				countClient := test.NewCountClient(cc)
+				ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "count")
+				nestedStream, err := countClient.Count(ctx, &test.Number{
+					Value: 10,
+				})
+				Expect(err).NotTo(HaveOccurred())
+				for i := 0; i < 10; i++ {
+					m, err := nestedStream.Recv()
+					Expect(err).NotTo(HaveOccurred())
+					Expect(m.Value).To(BeEquivalentTo(i))
+				}
+				return nil
+			},
+		}
+		tc.Run()
+	})
 })
 
 func checkIncrement(cc grpc.ClientConnInterface) {

@@ -56,6 +56,7 @@ type ServiceHandler struct {
 	controllerContext context.Context
 	Descriptor        *descriptorpb.ServiceDescriptorProto
 	MethodInvokers    map[string]MethodInvoker
+	MethodInfo        map[string]grpc.MethodInfo
 	MethodQOS         map[string]*QOS
 	TopologyFlags     TopologyFlags
 }
@@ -69,15 +70,26 @@ func NewDefaultServiceHandler(
 		controllerContext: ctx,
 		Descriptor:        descriptor,
 		MethodInvokers:    make(map[string]MethodInvoker),
+		MethodInfo:        make(map[string]grpc.MethodInfo),
 		MethodQOS:         make(map[string]*QOS),
 		TopologyFlags:     invoker.TopologyFlags(),
 	}
 	for _, method := range descriptor.Method {
+		sh.MethodInfo[method.GetName()] = grpc.MethodInfo{
+			Name:           method.GetName(),
+			IsClientStream: method.GetClientStreaming(),
+			IsServerStream: method.GetServerStreaming(),
+		}
 		if proto.HasExtension(method.GetOptions(), E_Qos) {
 			qos := proto.GetExtension(method.GetOptions(), E_Qos).(*QOS)
-			if qos.ReplicationStrategy == ReplicationStrategy_Broadcast && method.GetOutputType() != ".google.protobuf.Empty" {
-				// todo: temporary restriction
-				panic("methods with Broadcast ReplicationStrategy must have a response type of google.protobuf.Empty")
+			if qos.ReplicationStrategy == ReplicationStrategy_Broadcast {
+				if method.GetOutputType() != ".google.protobuf.Empty" {
+					// todo: temporary restriction
+					panic("methods with Broadcast ReplicationStrategy must have a response type of google.protobuf.Empty")
+				}
+				if method.GetServerStreaming() || method.GetClientStreaming() {
+					panic("only unary methods can have Broadcast ReplicationStrategy")
+				}
 			}
 			sh.MethodQOS[method.GetName()] = qos
 		}

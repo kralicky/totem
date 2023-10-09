@@ -199,5 +199,12 @@ func (cc *ClientConn) NewStream(
 	method string,
 	opts ...grpc.CallOption,
 ) (grpc.ClientStream, error) {
-	panic("stuck in limbo (nested streams not supported)")
+	if desc.ClientStreams {
+		panic("[totem] client streaming not implemented")
+	}
+	serviceName, methodName, err := parseQualifiedMethod(method)
+	if err != nil {
+		return nil, err
+	}
+	return newServerStreamClientWrapper(ctx, cc.controller, serviceName, methodName, opts...), nil
 }

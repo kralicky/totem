@@ -294,3 +294,16 @@ func (s *sleepServer) Sleep(_ context.Context, in *SleepRequest) (*emptypb.Empty
 	fmt.Printf("%s: done sleeping\n", s.Name)
 	return &emptypb.Empty{}, nil
 }
+
+type countServer struct {
+	UnsafeCountServer
+}
+
+func (s *countServer) Count(in *Number, stream Count_CountServer) error {
+	for i := 0; i < int(in.GetValue()); i++ {
+		if err := stream.Send(&Number{Value: int64(i)}); err != nil {
+			return err
+		}
+	}
+	return nil
+}

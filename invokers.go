@@ -17,6 +17,7 @@ import (
 
 type MethodInvoker interface {
 	Invoke(ctx context.Context, rpc *RPC) ([]byte, error)
+	InvokeStream(ctx context.Context, rpc *RPC, wc <-chan chan<- *RPC) error
 	TopologyFlags() TopologyFlags
 }
 
@@ -24,6 +25,7 @@ type localServiceInvoker struct {
 	serviceImpl interface{}
 	service     *grpc.ServiceDesc
 	methods     map[string]grpc.MethodDesc
+	streams     map[string]grpc.StreamDesc
 	logger      *zap.Logger
 	interceptor grpc.UnaryServerInterceptor
 	metrics     *MetricsExporter
@@ -38,14 +40,19 @@ func newLocalServiceInvoker(
 	metrics *MetricsExporter,
 	baseTopologyFlags TopologyFlags,
 ) *localServiceInvoker {
-	handlers := make(map[string]grpc.MethodDesc)
+	methods := make(map[string]grpc.MethodDesc)
+	streams := make(map[string]grpc.StreamDesc)
 	for _, method := range service.Methods {
-		handlers[method.MethodName] = method
+		methods[method.MethodName] = method
+	}
+	for _, stream := range service.Streams {
+		streams[stream.StreamName] = stream
 	}
 	return &localServiceInvoker{
 		serviceImpl: serviceImpl,
 		service:     service,
-		methods:     handlers,
+		methods:     methods,
+		streams:     streams,
 		logger:      logger,
 		interceptor: interceptor,
 		metrics:     metrics,
@@ -93,6 +100,38 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 		recordError(span, err)
 		return nil, err
 	}
+}
+
+func (l *localServiceInvoker) InvokeStream(ctx context.Context, req *RPC, wc <-chan chan<- *RPC) error {
+	writer := <-wc
+	// serviceName := req.GetServiceName()
+	methodName := req.GetMethodName()
+	s, ok := l.streams[methodName]
+	if !ok {
+		return status.Errorf(codes.Unimplemented, "unknown method %s", methodName)
+	}
+	go func() {
+		defer close(writer)
+		streamWrapper := newLocalServerStreamWrapper(ctx, req, writer)
+		rpcError := s.Handler(l.serviceImpl, streamWrapper)
+		var stat *status.Status
+		if rpcError != nil {
+			stat = status.Convert(rpcError)
+		} else {
+			stat = status.New(codes.OK, "")
+		}
+		trailers := streamWrapper.Close()
+		response := &RPC{
+			Content: &RPC_Response{
+				Response: &Response{
+					StatusProto: stat.Proto(),
+				},
+			},
+			Metadata: FromMD(trailers),
+		}
+		writer <- response
+	}()
+	return nil
 }
 
 func (l *localServiceInvoker) TopologyFlags() TopologyFlags {
@@ -155,6 +194,53 @@ func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte,
 	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
+
+func (r *streamControllerInvoker) InvokeStream(ctx context.Context, req *RPC, wc <-chan chan<- *RPC) error {
+
+	serviceName := req.GetServiceName()
+	methodName := req.GetMethodName()
+	r.logger.With(
+		zap.String("service", serviceName),
+		zap.String("method", methodName),
+		zap.Uint64("tag", req.GetTag()),
+		zap.Strings("md", req.GetMetadata().Keys()),
+	).Debug("invoking stream using stream controller")
+
+	// convert the incoming context to an outgoing context
+	md, ok := metadata.FromIncomingContext(ctx)
+	if ok {
+		ctx = metadata.NewOutgoingContext(ctx, md)
+	}
+	reqSize := len(req.GetRequest())
+
+	span := trace.SpanFromContext(ctx)
+	span.AddEvent("Stream Request: "+req.QualifiedMethodName(),
+		trace.WithAttributes(attribute.Int("size", reqSize)))
+
+	r.controller.Metrics.TrackTxBytes(serviceName, methodName, int64(reqSize))
+
+	writer := <-wc
+	go func() {
+		defer close(writer)
+
+		rc := r.controller.Request(ctx, req)
+		for {
+			select {
+			case rpc := <-rc:
+				switch rpc.Content.(type) {
+				case *RPC_ServerStreamMsg:
+					writer <- rpc
+				case *RPC_Response:
+					writer <- rpc
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+	return nil
 }
 
 func (r *streamControllerInvoker) TopologyFlags() TopologyFlags {

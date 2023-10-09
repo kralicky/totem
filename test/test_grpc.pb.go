@@ -143,6 +143,123 @@ var Test_ServiceDesc = grpc.ServiceDesc{
 }
 
 const (
+	Count_Count_FullMethodName = "/test.Count/Count"
+)
+
+// CountClient is the client API for Count service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://pkg.go.dev/google.golang.org/grpc/?tab=doc#ClientConn.NewStream.
+type CountClient interface {
+	Count(ctx context.Context, in *Number, opts ...grpc.CallOption) (Count_CountClient, error)
+}
+
+type countClient struct {
+	cc grpc.ClientConnInterface
+}
+
+func NewCountClient(cc grpc.ClientConnInterface) CountClient {
+	return &countClient{cc}
+}
+
+func (c *countClient) Count(ctx context.Context, in *Number, opts ...grpc.CallOption) (Count_CountClient, error) {
+	stream, err := c.cc.NewStream(ctx, &Count_ServiceDesc.Streams[0], Count_Count_FullMethodName, opts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &countCountClient{stream}
+	if err := x.ClientStream.SendMsg(in); err != nil {
+		return nil, err
+	}
+	if err := x.ClientStream.CloseSend(); err != nil {
+		return nil, err
+	}
+	return x, nil
+}
+
+type Count_CountClient interface {
+	Recv() (*Number, error)
+	grpc.ClientStream
+}
+
+type countCountClient struct {
+	grpc.ClientStream
+}
+
+func (x *countCountClient) Recv() (*Number, error) {
+	m := new(Number)
+	if err := x.ClientStream.RecvMsg(m); err != nil {
+		return nil, err
+	}
+	return m, nil
+}
+
+// CountServer is the server API for Count service.
+// All implementations must embed UnimplementedCountServer
+// for forward compatibility
+type CountServer interface {
+	Count(*Number, Count_CountServer) error
+	mustEmbedUnimplementedCountServer()
+}
+
+// UnimplementedCountServer must be embedded to have forward compatible implementations.
+type UnimplementedCountServer struct {
+}
+
+func (UnimplementedCountServer) Count(*Number, Count_CountServer) error {
+	return status.Errorf(codes.Unimplemented, "method Count not implemented")
+}
+func (UnimplementedCountServer) mustEmbedUnimplementedCountServer() {}
+
+// UnsafeCountServer may be embedded to opt out of forward compatibility for this service.
+// Use of this interface is not recommended, as added methods to CountServer will
+// result in compilation errors.
+type UnsafeCountServer interface {
+	mustEmbedUnimplementedCountServer()
+}
+
+func RegisterCountServer(s grpc.ServiceRegistrar, srv CountServer) {
+	s.RegisterService(&Count_ServiceDesc, srv)
+}
+
+func _Count_Count_Handler(srv interface{}, stream grpc.ServerStream) error {
+	m := new(Number)
+	if err := stream.RecvMsg(m); err != nil {
+		return err
+	}
+	return srv.(CountServer).Count(m, &countCountServer{stream})
+}
+
+type Count_CountServer interface {
+	Send(*Number) error
+	grpc.ServerStream
+}
+
+type countCountServer struct {
+	grpc.ServerStream
+}
+
+func (x *countCountServer) Send(m *Number) error {
+	return x.ServerStream.SendMsg(m)
+}
+
+// Count_ServiceDesc is the grpc.ServiceDesc for Count service.
+// It's only intended for direct use with grpc.RegisterService,
+// and not to be introspected or modified (even as a copy)
+var Count_ServiceDesc = grpc.ServiceDesc{
+	ServiceName: "test.Count",
+	HandlerType: (*CountServer)(nil),
+	Methods:     []grpc.MethodDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Count",
+			Handler:       _Count_Count_Handler,
+			ServerStreams: true,
+		},
+	},
+	Metadata: "github.com/kralicky/totem/test/test.proto",
+}
+
+const (
 	Increment_Inc_FullMethodName = "/test.Increment/Inc"
 )
 
