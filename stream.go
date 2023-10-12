@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -18,7 +19,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -55,7 +55,7 @@ func DefaultWorkerPoolParams() WorkerPoolParameters {
 type StreamControllerOptions struct {
 	Metrics *MetricsExporter
 	Name    string
-	Logger  *zap.Logger
+	Logger  *slog.Logger
 
 	// Rx/Tx metrics are tracked in the following places:
 	// - For outgoing requests/incoming replies, in the clientconn.
@@ -82,9 +82,9 @@ type WorkerPoolParameters struct {
 // There can be at most one stream controller per stream.
 func NewStreamController(stream Stream, opts StreamControllerOptions) *StreamController {
 	if opts.Logger == nil {
-		opts.Logger = Log.Named(opts.Name)
+		opts.Logger = Log.WithGroup(opts.Name)
 	} else {
-		opts.Logger = opts.Logger.Named(opts.Name)
+		opts.Logger = opts.Logger.WithGroup(opts.Name)
 	}
 
 	sh := &StreamController{
@@ -113,9 +113,7 @@ func NewStreamController(stream Stream, opts StreamControllerOptions) *StreamCon
 
 func (sh *StreamController) RegisterServiceHandler(handler *ServiceHandler) {
 	name := handler.Descriptor.GetName()
-	sh.Logger.With(
-		zap.String("service", name),
-	).Debug("registering service handler")
+	sh.Logger.Debug("registering service handler", "service", name)
 
 	list, _ := sh.services.LoadOrStore(name, &ServiceHandlerList{})
 	list.Append(handler)
@@ -126,10 +124,10 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 	methodName := m.GetMethodName()
 
 	lg := sh.Logger.With(
-		zap.Uint64("tag", m.GetTag()),
-		zap.String("service", serviceName),
-		zap.String("method", methodName),
-		zap.Strings("md", m.GetMetadata().Keys()),
+		"tag", m.GetTag(),
+		"service", serviceName,
+		"method", methodName,
+		"md", m.GetMetadata().Keys(),
 	)
 	lg.Debug("request")
 
@@ -164,7 +162,7 @@ func (sh *StreamController) Request(ctx context.Context, m *RPC) <-chan *RPC {
 
 func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) {
 	lg := sh.Logger.With(
-		zap.Uint64("tag", tag),
+		"tag", tag,
 	)
 	lg.Debug("reply (success)")
 
@@ -199,8 +197,8 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 
 func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply error) {
 	lg := sh.Logger.With(
-		zap.Uint64("tag", tag),
-		zap.Error(reply),
+		"tag", tag,
+		slog.Any("error", reply),
 	)
 	lg.Debug("reply")
 
@@ -235,7 +233,7 @@ func (sh *StreamController) ReplyErr(ctx context.Context, tag uint64, reply erro
 
 func (sh *StreamController) StreamReply(tag uint64, msg *ServerStreamMessage) {
 	lg := sh.Logger.With(
-		zap.Uint64("tag", tag),
+		"tag", tag,
 	)
 	lg.Debug("reply (in stream)")
 
@@ -257,7 +255,7 @@ func (sh *StreamController) StreamReply(tag uint64, msg *ServerStreamMessage) {
 
 func (sh *StreamController) Kick(err error) {
 	lg := sh.Logger.With(
-		zap.Error(err),
+		"error", err,
 	)
 	sh.kickOnce.Do(func() {
 		if status.Code(err) == codes.Canceled {
@@ -362,9 +360,8 @@ func (sh *StreamController) Run(ctx context.Context) error {
 		}
 	}
 	sh.pendingRPCs.Range(func(tag uint64, future chan *RPC) bool {
-		sh.Logger.With(
-			zap.Uint64("tag", tag),
-		).Debug("cancelling pending RPC")
+		sh.Logger.Debug("cancelling pending RPC", "tag", tag)
+
 		future <- &RPC{
 			Tag: tag,
 			Content: &RPC_Response{
@@ -384,11 +381,9 @@ func (sh *StreamController) Run(ctx context.Context) error {
 }
 
 func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequest) (*ServiceInfo, error) {
-	sh.Logger.With(
-		zap.String("initiator", req.Initiator),
-		zap.Any("visited", req.Visited),
-		zap.Int("remainingHops", int(req.GetRemainingHops())),
-	).Debug("ListServices")
+	sh.Logger.Debug("ListServices", "initiator", req.Initiator,
+		"visited", req.Visited,
+		"remainingHops", int(req.GetRemainingHops()))
 
 	var span trace.Span
 	if TracingEnabled {
@@ -502,16 +497,14 @@ func (sh *StreamController) ListServices(ctx context.Context, req *DiscoveryRequ
 				},
 			})
 			if err != nil {
-				sh.Logger.With(
-					zap.Error(err),
-				).Warn("error invoking ListServices")
+				sh.Logger.Warn("error invoking ListServices", "error", err)
+
 				return true
 			}
 			remoteInfo := &ServiceInfo{}
 			if err := proto.Unmarshal(respData, remoteInfo); err != nil {
-				sh.Logger.With(
-					zap.Error(err),
-				).Warn("error unmarshaling ListServices response")
+				sh.Logger.Warn("error unmarshaling ListServices response", "error", err)
+
 				return true
 			}
 			if TracingEnabled {
@@ -664,9 +657,8 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 	}
 
 	// No handler found
-	sh.Logger.With(
-		zap.String("service", svcName),
-	).Debug("unknown service")
+	sh.Logger.Debug("unknown service", "service", svcName)
+
 	err := status.Errorf(codes.Unimplemented, "unknown service: %q", svcName)
 	recordError(span, err)
 	sh.ReplyErr(ctx, requestTag, err)

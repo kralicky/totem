@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"reflect"
 	"sync"
 	"time"
@@ -12,7 +13,6 @@ import (
 	"go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -24,7 +24,7 @@ type Server struct {
 	stream             Stream
 	lock               sync.RWMutex
 	controller         *StreamController
-	logger             *zap.Logger
+	logger             *slog.Logger
 	splicedControllers []*StreamController
 	tracer             trace.Tracer
 
@@ -100,7 +100,7 @@ func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 	}
 	options.apply(opts...)
 
-	lg := Log.Named(options.name)
+	lg := Log.WithGroup(options.name)
 
 	ctrl := NewStreamController(stream, StreamControllerOptions{
 		Logger:           lg,
@@ -175,9 +175,8 @@ func (r *Server) Splice(stream Stream, opts ...ServerOption) error {
 			if proto.HasExtension(sh.Descriptor.Options, E_Visibility) {
 				vis := proto.GetExtension(sh.Descriptor.Options, E_Visibility).(*Visibility)
 				if vis.SplicedClients {
-					r.logger.With(
-						zap.String("service", sh.Descriptor.GetName()),
-					).Debug("enabling local service on spliced controller due to visibility option")
+					r.logger.Debug("enabling local service on spliced controller due to visibility option", "service", sh.Descriptor.GetName())
+
 					ctrl.RegisterServiceHandler(sh)
 				}
 			}
@@ -191,9 +190,8 @@ func (r *Server) Splice(stream Stream, opts ...ServerOption) error {
 			if status.Code(err) == codes.Canceled {
 				r.logger.Debug("stream closed")
 			} else {
-				r.logger.With(
-					zap.Error(err),
-				).Warn("stream exited with error")
+				r.logger.Warn("stream exited with error", "error", err)
+
 			}
 		}
 	}()
@@ -205,9 +203,7 @@ func (r *Server) Splice(stream Stream, opts ...ServerOption) error {
 		err := fmt.Errorf("service discovery failed: %w", err)
 		return err
 	}
-	r.logger.With(
-		zap.Any("methods", info.MethodNames()),
-	).Debug("splicing stream")
+	r.logger.Debug("splicing stream", "methods", info.MethodNames())
 
 	handlerInvoker := ctrl.NewInvoker()
 	for _, desc := range info.Services {
@@ -225,9 +221,7 @@ func (r *Server) Splice(stream Stream, opts ...ServerOption) error {
 func (r *Server) register(serviceDesc *grpc.ServiceDesc, impl interface{}) {
 	r.lock.Lock()
 	defer r.lock.Unlock()
-	r.logger.With(
-		zap.String("service", serviceDesc.ServiceName),
-	).Debug("registering service")
+	r.logger.Debug("registering service", "service", serviceDesc.ServiceName)
 
 	if TracingEnabled {
 		r.setupSpan.AddEvent("Registering Local Service", trace.WithAttributes(
@@ -258,13 +252,11 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		runErr := r.controller.Run(r.Context())
 		if runErr != nil {
 			if status.Code(runErr) == codes.Canceled {
-				r.logger.With(
-					zap.Error(runErr),
-				).Debug("stream canceled")
+				r.logger.Debug("stream canceled", "error", runErr)
+
 			} else {
-				r.logger.With(
-					zap.Error(runErr),
-				).Warn("stream exited with error")
+				r.logger.Warn("stream exited with error", "error", runErr)
+
 			}
 		} else {
 			r.logger.Debug("stream closed")
@@ -274,10 +266,9 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		r.lock.Lock()
 		defer r.lock.Unlock()
 		if runErr != nil {
-			r.logger.With(
-				zap.Error(runErr),
-				zap.Int("numControllers", len(r.splicedControllers)),
-			).Debug("kicking spliced controllers")
+			r.logger.Debug("kicking spliced controllers", "error", runErr,
+				"numControllers", len(r.splicedControllers))
+
 		}
 		for _, spliced := range r.splicedControllers {
 			if runErr != nil {
@@ -299,9 +290,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 		return nil, ch
 	}
 
-	r.logger.With(
-		zap.Any("methods", info.MethodNames()),
-	).Debug("service discovery complete")
+	r.logger.Debug("service discovery complete", "methods", info.MethodNames())
 
 	r.setupSpan.AddEvent("Service Discovery Complete", trace.WithAttributes(
 		attribute.StringSlice("services", info.ServiceNames()),
@@ -324,7 +313,7 @@ func (r *Server) Serve() (grpc.ClientConnInterface, <-chan error) {
 	return &ClientConn{
 		controller:  r.controller,
 		interceptor: r.interceptors.Outgoing,
-		logger:      r.logger.Named("cc"),
+		logger:      r.logger.WithGroup("cc"),
 		metrics:     r.metrics,
 	}, ch
 }

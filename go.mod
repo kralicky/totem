@@ -22,7 +22,6 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v0.39.0
 	go.opentelemetry.io/otel/trace v1.16.0
 	go.uber.org/atomic v1.11.0
-	go.uber.org/zap v1.25.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230803162519-f966b187b2e5
 	google.golang.org/grpc v1.57.0
 	google.golang.org/protobuf v1.31.0
@@ -30,7 +29,6 @@ require (
 
 require (
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/benbjohnson/clock v1.3.3 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/bufbuild/protocompile v0.5.2-0.20230523010820-2b297241d0ff // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect

@@ -2,11 +2,11 @@ package totem
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
@@ -26,7 +26,7 @@ type localServiceInvoker struct {
 	service     *grpc.ServiceDesc
 	methods     map[string]grpc.MethodDesc
 	streams     map[string]grpc.StreamDesc
-	logger      *zap.Logger
+	logger      *slog.Logger
 	interceptor grpc.UnaryServerInterceptor
 	metrics     *MetricsExporter
 	flags       TopologyFlags
@@ -35,7 +35,7 @@ type localServiceInvoker struct {
 func newLocalServiceInvoker(
 	serviceImpl interface{},
 	service *grpc.ServiceDesc,
-	logger *zap.Logger,
+	logger *slog.Logger,
 	interceptor grpc.UnaryServerInterceptor,
 	metrics *MetricsExporter,
 	baseTopologyFlags TopologyFlags,
@@ -64,12 +64,10 @@ func (l *localServiceInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, err
 	serviceName := req.GetServiceName()
 	methodName := req.GetMethodName()
 
-	l.logger.With(
-		zap.String("service", serviceName),
-		zap.String("method", methodName),
-		zap.Uint64("tag", req.GetTag()),
-		zap.Strings("md", req.GetMetadata().Keys()),
-	).Debug("invoking method using local service")
+	l.logger.Debug("invoking method using local service", "service", serviceName,
+		"method", methodName,
+		"tag", req.GetTag(),
+		"md", req.GetMetadata().Keys())
 
 	span := trace.SpanFromContext(ctx)
 
@@ -140,11 +138,11 @@ func (l *localServiceInvoker) TopologyFlags() TopologyFlags {
 
 type streamControllerInvoker struct {
 	controller *StreamController
-	logger     *zap.Logger
+	logger     *slog.Logger
 	flags      TopologyFlags
 }
 
-func newStreamControllerInvoker(ctrl *StreamController, flags TopologyFlags, logger *zap.Logger) *streamControllerInvoker {
+func newStreamControllerInvoker(ctrl *StreamController, flags TopologyFlags, logger *slog.Logger) *streamControllerInvoker {
 	return &streamControllerInvoker{
 		controller: ctrl,
 		logger:     logger,
@@ -155,12 +153,10 @@ func newStreamControllerInvoker(ctrl *StreamController, flags TopologyFlags, log
 func (r *streamControllerInvoker) Invoke(ctx context.Context, req *RPC) ([]byte, error) {
 	serviceName := req.GetServiceName()
 	methodName := req.GetMethodName()
-	r.logger.With(
-		zap.String("service", serviceName),
-		zap.String("method", methodName),
-		zap.Uint64("tag", req.GetTag()),
-		zap.Strings("md", req.GetMetadata().Keys()),
-	).Debug("invoking method using stream controller")
+	r.logger.Debug("invoking method using stream controller", "service", serviceName,
+		"method", methodName,
+		"tag", req.GetTag(),
+		"md", req.GetMetadata().Keys())
 
 	// convert the incoming context to an outgoing context
 	md, ok := metadata.FromIncomingContext(ctx)
@@ -200,12 +196,10 @@ func (r *streamControllerInvoker) InvokeStream(ctx context.Context, req *RPC, wc
 
 	serviceName := req.GetServiceName()
 	methodName := req.GetMethodName()
-	r.logger.With(
-		zap.String("service", serviceName),
-		zap.String("method", methodName),
-		zap.Uint64("tag", req.GetTag()),
-		zap.Strings("md", req.GetMetadata().Keys()),
-	).Debug("invoking stream using stream controller")
+	r.logger.Debug("invoking stream using stream controller", "service", serviceName,
+		"method", methodName,
+		"tag", req.GetTag(),
+		"md", req.GetMetadata().Keys())
 
 	// convert the incoming context to an outgoing context
 	md, ok := metadata.FromIncomingContext(ctx)
