@@ -118,7 +118,7 @@ func (l *localServiceInvoker) InvokeStream(ctx context.Context, req *RPC, wc <-c
 		if rpcError != nil {
 			stat = status.Convert(rpcError)
 		} else {
-			stat = status.New(codes.OK, "")
+			stat = status.New(codes.OK, codes.OK.String())
 		}
 		trailers := streamWrapper.Close()
 		response := &RPC{

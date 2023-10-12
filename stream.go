@@ -183,7 +183,7 @@ func (sh *StreamController) Reply(ctx context.Context, tag uint64, data []byte) 
 		Content: &RPC_Response{
 			Response: &Response{
 				Response:    data,
-				StatusProto: status.New(codes.OK, "").Proto(),
+				StatusProto: status.New(codes.OK, codes.OK.String()).Proto(),
 			},
 		},
 		Metadata: FromMD(md),
