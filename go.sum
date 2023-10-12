@@ -182,6 +182,8 @@ github.com/kralicky/gpkg v0.0.0-20220311205216-0d8ea9557555 h1:w/v9aYd9gdL0pEofC
 github.com/kralicky/gpkg v0.0.0-20220311205216-0d8ea9557555/go.mod h1:EJrGSfmocDg2CBjHDm3zy9oxNKCSGhf+MNTiN1DRbKA=
 github.com/kralicky/ragu v1.0.11-0.20230530191519-84f5aaa5fd69 h1:Iqg6oc2ty1dLRiBJfj7EwyKy1O81zL8+wcW5uMRlnIg=
 github.com/kralicky/ragu v1.0.11-0.20230530191519-84f5aaa5fd69/go.mod h1:njQGnwU5IHm4Qx6/oOY0ll7Z6WA0apfP0ClpVA0M27Q=
+github.com/lmittmann/tint v1.0.2 h1:9XZ+JvEzjvd3VNVugYqo3j+dl0NRju8k9FquAusJExM=
+github.com/lmittmann/tint v1.0.2/go.mod h1:HIS3gSy7qNwGCj+5oRjAutErFBl4BzdQP6cJZ0NfMwE=
 github.com/lucasb-eyer/go-colorful v1.2.0 h1:1nnpGOrhyZZuNyfu1QjKiUICQ74+3FNCN69Aj6K7nkY=
 github.com/lucasb-eyer/go-colorful v1.2.0/go.mod h1:R4dSotOR9KMtayYi1e77YzuveK+i7ruzyGqttikkLy0=
 github.com/magefile/mage v1.15.0 h1:BvGheCMAsG3bWUDbZ8AyXXpCNwU9u5CB6sM+HNb9HYg=
@@ -215,6 +217,8 @@ github.com/rogpeppe/go-internal v1.11.0 h1:cWPaGQEPrBb5/AsnsZesgZZ9yb1OQ+GOISoDN
 github.com/rogpeppe/go-internal v1.11.0/go.mod h1:ddIwULY96R17DhadqLgMfk9H9tvdUzkipdSkR5nkCZA=
 github.com/samber/lo v1.38.1 h1:j2XEAqXKb09Am4ebOg31SpvzUTTs6EN3VfgeLUhPdXM=
 github.com/samber/lo v1.38.1/go.mod h1:+m/ZKRl6ClXCE2Lgf3MsQlWfh4bn1bz6CXEOxnEXnEA=
+github.com/samber/slog-multi v1.0.2 h1:6BVH9uHGAsiGkbbtQgAOQJMpKgV8unMrHhhJaw+X1EQ=
+github.com/samber/slog-multi v1.0.2/go.mod h1:uLAvHpGqbYgX4FSL0p1ZwoLuveIAJvBECtE07XmYvFo=
 github.com/spaolacci/murmur3 v0.0.0-20180118202830-f09979ecbc72/go.mod h1:JwIasOWyU6f++ZhiEuf87xNszmSA2myDM2Kzu9HwQUA=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.5.0 h1:1zr/of2m5FGMsad5YfcqgdqdWrIhu+EBEJRhR1U7z/c=
