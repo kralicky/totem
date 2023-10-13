@@ -5,7 +5,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"log/slog"
 	"net"
 	"os"
 	"runtime"
@@ -38,7 +37,6 @@ var defaultServerOpts = []grpc.ServerOption{
 }
 
 func TestTotem(t *testing.T) {
-	slog.SetDefault(slog.New(slog.NewTextHandler(GinkgoWriter, &slog.HandlerOptions{Level: slog.LevelDebug})))
 	SetDefaultEventuallyTimeout(60 * time.Second)
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Totem Suite")
