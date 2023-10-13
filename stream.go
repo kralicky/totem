@@ -82,9 +82,7 @@ type WorkerPoolParameters struct {
 // There can be at most one stream controller per stream.
 func NewStreamController(stream Stream, opts StreamControllerOptions) *StreamController {
 	if opts.Logger == nil {
-		opts.Logger = Log.WithGroup(opts.Name)
-	} else {
-		opts.Logger = opts.Logger.WithGroup(opts.Name)
+		opts.Logger = slog.Default()
 	}
 
 	sh := &StreamController{

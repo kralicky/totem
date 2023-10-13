@@ -3,6 +3,7 @@ package totem
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
 	"reflect"
@@ -24,7 +25,6 @@ type Server struct {
 	stream             Stream
 	lock               sync.RWMutex
 	controller         *StreamController
-	logger             *slog.Logger
 	splicedControllers []*StreamController
 	tracer             trace.Tracer
 
@@ -33,6 +33,7 @@ type Server struct {
 }
 
 type ServerOptions struct {
+	logger            *slog.Logger
 	name              string
 	discoveryHopLimit int32
 	interceptors      InterceptorConfig
@@ -94,16 +95,23 @@ func WithName(name string) ServerOption {
 	}
 }
 
+func WithLogger(logger *slog.Logger) ServerOption {
+	return func(o *ServerOptions) {
+		o.logger = logger
+	}
+}
+
+var defaultNoopLogger = slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelError}))
+
 func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 	options := ServerOptions{
 		discoveryHopLimit: -1,
+		logger:            defaultNoopLogger,
 	}
 	options.apply(opts...)
 
-	lg := Log.WithGroup(options.name)
-
 	ctrl := NewStreamController(stream, StreamControllerOptions{
-		Logger:           lg,
+		Logger:           options.logger,
 		Name:             options.name,
 		Metrics:          options.metrics,
 		WorkerPoolParams: DefaultWorkerPoolParams(),
@@ -120,7 +128,6 @@ func NewServer(stream Stream, opts ...ServerOption) (*Server, error) {
 		ServerOptions: options,
 		stream:        stream,
 		controller:    ctrl,
-		logger:        lg,
 		setupCtx:      setupCtx,
 		setupSpan:     span,
 		tracer:        tracer,
