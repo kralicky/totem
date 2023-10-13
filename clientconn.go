@@ -3,12 +3,12 @@ package totem
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/protobuf/proto"
@@ -18,7 +18,7 @@ import (
 type ClientConn struct {
 	controller  *StreamController
 	interceptor grpc.UnaryClientInterceptor
-	logger      *zap.Logger
+	logger      *slog.Logger
 	metrics     *MetricsExporter
 }
 
@@ -65,25 +65,23 @@ func (cc *ClientConn) invoke(
 	mdSupplier := metadataSupplier{&md}
 
 	lg := cc.logger.With(
-		zap.String("requestType", fmt.Sprintf("%T", req)),
-		zap.String("replyType", fmt.Sprintf("%T", reply)),
+		"requestType", fmt.Sprintf("%T", req),
+		"replyType", fmt.Sprintf("%T", reply),
 	)
 	var reqMsg []byte
 	switch req := req.(type) {
 	case *RPC:
 		serviceName = req.ServiceName
 		methodName = req.MethodName
-		lg.With(
-			zap.String("method", method),
-		).Debug("forwarding rpc")
+		lg.Debug("forwarding rpc", "method", method)
+
 		reqMsg = req.GetRequest()
 		if req.Metadata != nil {
 			md = metadata.Join(md, req.Metadata.ToMD())
 		}
 	case protoadapt.MessageV2:
-		lg.With(
-			zap.String("method", method),
-		).Debug("invoking method")
+		lg.Debug("invoking method", "method", method)
+
 		var err error
 		reqMsg, err = proto.Marshal(req)
 		if err != nil {
@@ -91,9 +89,8 @@ func (cc *ClientConn) invoke(
 		}
 	case protoadapt.MessageV1:
 		reqv2 := protoadapt.MessageV2Of(req)
-		lg.With(
-			zap.String("method", method),
-		).Debug("invoking method")
+		lg.Debug("invoking method", "method", method)
+
 		var err error
 		reqMsg, err = proto.Marshal(reqv2)
 		if err != nil {
@@ -132,19 +129,17 @@ func (cc *ClientConn) invoke(
 		resp := rpc.GetResponse()
 		stat := resp.GetStatus()
 		if err := stat.Err(); err != nil {
-			cc.logger.With(
-				zap.Uint64("tag", rpc.Tag),
-				zap.String("method", method),
-				zap.Error(err),
-			).Debug("received reply with error")
+			cc.logger.Debug("received reply with error", "tag", rpc.Tag,
+				"method", method,
+				"error", err)
+
 			recordErrorStatus(span, stat)
 			return err
 		}
 
-		cc.logger.With(
-			zap.Uint64("tag", rpc.Tag),
-			zap.String("method", method),
-		).Debug("received reply")
+		cc.logger.Debug("received reply", "tag", rpc.Tag,
+			"method", method)
+
 		recordSuccess(span)
 		cc.metrics.TrackSvcTxLatency(serviceName, methodName, time.Since(startTime))
 		cc.metrics.TrackRxBytes(serviceName, methodName, int64(len(resp.Response)))
@@ -165,22 +160,18 @@ func (cc *ClientConn) invoke(
 			}
 		case protoadapt.MessageV2:
 			if err := proto.Unmarshal(resp.GetResponse(), reply); err != nil {
-				cc.logger.With(
-					zap.Uint64("tag", rpc.Tag),
-					zap.String("method", method),
-					zap.Error(err),
-				).Error("received malformed response message")
+				cc.logger.Error("received malformed response message", "tag", rpc.Tag,
+					"method", method,
+					"error", err)
 
 				return fmt.Errorf("[totem] malformed response: %w", err)
 			}
 		case protoadapt.MessageV1:
 			replyv2 := protoadapt.MessageV2Of(reply)
 			if err := proto.Unmarshal(resp.GetResponse(), replyv2); err != nil {
-				cc.logger.With(
-					zap.Uint64("tag", rpc.Tag),
-					zap.String("method", method),
-					zap.Error(err),
-				).Error("received malformed response message")
+				cc.logger.Error("received malformed response message", "tag", rpc.Tag,
+					"method", method,
+					"error", err)
 
 				return fmt.Errorf("[totem] malformed response: %w", err)
 			}

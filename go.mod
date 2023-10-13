@@ -4,7 +4,6 @@ go 1.21
 
 require (
 	github.com/alitto/pond v1.8.3
-	github.com/charmbracelet/lipgloss v0.7.1
 	github.com/google/uuid v1.3.0
 	github.com/jhump/protoreflect v1.15.1
 	github.com/kralicky/gpkg v0.0.0-20220311205216-0d8ea9557555
@@ -22,15 +21,12 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v0.39.0
 	go.opentelemetry.io/otel/trace v1.16.0
 	go.uber.org/atomic v1.11.0
-	go.uber.org/zap v1.25.0
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20230803162519-f966b187b2e5
 	google.golang.org/grpc v1.57.0
 	google.golang.org/protobuf v1.31.0
 )
 
 require (
-	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
-	github.com/benbjohnson/clock v1.3.3 // indirect
 	github.com/bmatcuk/doublestar v1.3.4 // indirect
 	github.com/bufbuild/protocompile v0.5.2-0.20230523010820-2b297241d0ff // indirect
 	github.com/cenkalti/backoff/v4 v4.2.1 // indirect
@@ -44,13 +40,7 @@ require (
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.7.0 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/kr/pretty v0.3.1 // indirect
-	github.com/lucasb-eyer/go-colorful v1.2.0 // indirect
-	github.com/mattn/go-isatty v0.0.19 // indirect
-	github.com/mattn/go-runewidth v0.0.15 // indirect
-	github.com/muesli/reflow v0.3.0 // indirect
-	github.com/muesli/termenv v0.15.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
-	github.com/rivo/uniseg v0.4.4 // indirect
 	github.com/rogpeppe/go-internal v1.11.0 // indirect
 	github.com/samber/lo v1.38.1 // indirect
 	github.com/stretchr/testify v1.8.4 // indirect

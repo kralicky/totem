@@ -6,7 +6,6 @@ import (
 
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/trace"
-	"go.uber.org/zap"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -34,7 +33,7 @@ func discoverServices(ctx context.Context, ctrl *StreamController, opts discover
 		)
 		defer span.End()
 		lg = lg.With(
-			zap.String("traceID", span.SpanContext().TraceID().String()),
+			"traceID", span.SpanContext().TraceID().String(),
 		)
 	}
 	lg.Debug("starting service discovery")
@@ -51,9 +50,8 @@ func discoverServices(ctx context.Context, ctrl *StreamController, opts discover
 	respMsg := resp.GetResponse()
 	stat := respMsg.GetStatus()
 	if err := stat.Err(); err != nil {
-		lg.With(
-			zap.Error(err),
-		).Warn("discovery failed")
+		lg.Warn("discovery failed", "error", err)
+
 		return nil, err
 	}
 
@@ -69,9 +67,7 @@ func discoverServices(ctx context.Context, ctrl *StreamController, opts discover
 		), trace.WithTimestamp(time.Now()))
 	}
 
-	lg.With(
-		zap.Any("services", infoMsg.ServiceNames()),
-	).Debug("discovery complete")
+	lg.Debug("discovery complete", "services", infoMsg.ServiceNames())
 
 	return infoMsg, nil
 }
