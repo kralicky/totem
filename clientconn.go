@@ -50,11 +50,19 @@ func (cc *ClientConn) invoke(
 	callOpts ...grpc.CallOption,
 ) error {
 	var serviceName, methodName string
-	if method != Forward {
+	forwarding := method == Forward
+	if !forwarding {
 		var err error
 		serviceName, methodName, err = parseQualifiedMethod(method)
 		if err != nil {
 			return err
+		}
+	} else {
+		if _, ok := req.(*RPC); !ok {
+			return fmt.Errorf("[totem] invalid forwarding request type: %T (expected *totem.RPC)", req)
+		}
+		if _, ok := reply.(*RPC); !ok {
+			return fmt.Errorf("[totem] invalid forwarding response type: %T (expected *totem.RPC)", reply)
 		}
 	}
 
@@ -127,18 +135,20 @@ func (cc *ClientConn) invoke(
 	select {
 	case rpc := <-future:
 		resp := rpc.GetResponse()
-		stat := resp.GetStatus()
-		if err := stat.Err(); err != nil {
-			cc.logger.Debug("received reply with error", "tag", rpc.Tag,
-				"method", method,
-				"error", err)
+		if !forwarding {
+			// don't unpack response status from replies to forwarded messages
+			stat := resp.GetStatus()
+			if err := stat.Err(); err != nil {
+				cc.logger.Debug("received reply with error", "tag", rpc.Tag,
+					"method", method,
+					"error", err)
 
-			recordErrorStatus(span, stat)
-			return err
+				recordErrorStatus(span, stat)
+				return err
+			}
 		}
 
-		cc.logger.Debug("received reply", "tag", rpc.Tag,
-			"method", method)
+		cc.logger.Debug("received reply", "tag", rpc.Tag, "method", method)
 
 		recordSuccess(span)
 		cc.metrics.TrackSvcTxLatency(serviceName, methodName, time.Since(startTime))
@@ -158,6 +168,7 @@ func (cc *ClientConn) invoke(
 			reply.Content = &RPC_Response{
 				Response: resp,
 			}
+			reply.Metadata = FromMD(rpc.Metadata.ToMD())
 		case protoadapt.MessageV2:
 			if err := proto.Unmarshal(resp.GetResponse(), reply); err != nil {
 				cc.logger.Error("received malformed response message", "tag", rpc.Tag,

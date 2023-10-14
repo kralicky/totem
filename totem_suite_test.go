@@ -12,8 +12,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/format"
 	"go.opentelemetry.io/contrib/propagators/autoprop"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/exporters/jaeger"
@@ -21,9 +23,13 @@ import (
 	tracesdk "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.12.0"
 
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/prototext"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
 	"google.golang.org/protobuf/types/known/emptypb"
 
 	. "github.com/kralicky/totem/test"
@@ -86,6 +92,7 @@ type testServer struct {
 }
 
 func (ts *testServer) TestStream(stream Test_TestStreamServer) error {
+	defer GinkgoRecover()
 	defer ts.wg.Done()
 	return ts.testCase.ServerHandler(stream)
 }
@@ -237,10 +244,16 @@ type errorServer struct {
 	requestLimiter
 }
 
-func (s *errorServer) Error(ctx context.Context, err *ErrorRequest) (*emptypb.Empty, error) {
+func (s *errorServer) Error(ctx context.Context, req *ErrorRequest) (*emptypb.Empty, error) {
 	defer s.requestLimiter.Tick()
-	if err.ReturnError {
-		return nil, status.Error(codes.Aborted, "error")
+	err, _ := status.New(codes.Aborted, "error").WithDetails(&errdetails.ErrorInfo{Reason: "reason", Domain: "domain", Metadata: map[string]string{"key": "value"}})
+
+	// if err := grpc.SetHeader(ctx, metadata.Pairs("errorKey", "errorValue")); err != nil {
+	// 	panic(err)
+	// }
+
+	if req.ReturnError {
+		return nil, err.Err()
 	} else {
 		return &emptypb.Empty{}, nil
 	}
@@ -307,4 +320,44 @@ func (s *countServer) Count(in *Number, stream Count_CountServer) error {
 		}
 	}
 	return nil
+}
+
+func ProtoEqual(expected proto.Message) *ProtoMatcher {
+	return &ProtoMatcher{
+		Expected: expected,
+	}
+}
+
+type ProtoMatcher struct {
+	Expected proto.Message
+}
+
+func (matcher *ProtoMatcher) Match(actual any) (success bool, err error) {
+	if actual == nil && matcher.Expected == nil {
+		return false, fmt.Errorf("Refusing to compare <nil> to <nil>.\nBe explicit and use BeNil() instead.  This is to avoid mistakes where both sides of an assertion are erroneously uninitialized")
+	}
+	if _, ok := actual.(proto.Message); !ok {
+		return false, fmt.Errorf("ProtoMatcher expects a proto.Message. Got:\n%s", format.Object(actual, 1))
+	}
+	return proto.Equal(actual.(proto.Message), matcher.Expected), nil
+}
+
+func (matcher *ProtoMatcher) FailureMessage(actual any) (message string) {
+	diff := cmp.Diff(actual.(proto.Message), matcher.Expected, protocmp.Transform())
+	return fmt.Sprintf("Expected\n%s\n%s\n%s\ndiff:\n%s",
+		format.IndentString(prototext.Format(actual.(proto.Message)), 1),
+		"to equal",
+		format.IndentString(prototext.Format(matcher.Expected), 1),
+		diff,
+	)
+}
+
+func (matcher *ProtoMatcher) NegatedFailureMessage(actual any) (message string) {
+	diff := cmp.Diff(actual.(proto.Message), matcher.Expected, protocmp.Transform())
+	return fmt.Sprintf("Expected\n%s\n%s\n%s\ndiff:\n%s",
+		format.IndentString(prototext.Format(actual.(proto.Message)), 1),
+		"not to equal",
+		format.IndentString(prototext.Format(matcher.Expected), 1),
+		diff,
+	)
 }

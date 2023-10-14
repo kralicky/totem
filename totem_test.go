@@ -9,15 +9,22 @@ import (
 	sync "sync"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"github.com/kralicky/totem"
 	"github.com/kralicky/totem/test"
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
+	"github.com/onsi/gomega/format"
+	"google.golang.org/genproto/googleapis/rpc/errdetails"
+	statuspb "google.golang.org/genproto/googleapis/rpc/status"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+	"google.golang.org/protobuf/encoding/prototext"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
+	"google.golang.org/protobuf/types/known/anypb"
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
@@ -25,11 +32,12 @@ var (
 	timeout = time.Second * 6
 )
 
-var _ = Describe("Test", func() {
+var _ = FDescribe("Test", func() {
 	It("should work with two different servers", func() {
 		a, b := make(chan struct{}), make(chan struct{})
 		tc := testCase{
 			ServerHandler: func(stream test.Test_TestStreamServer) error {
+				GinkgoHelper()
 				ts, err := totem.NewServer(stream)
 				if err != nil {
 					return err
@@ -184,7 +192,9 @@ var _ = Describe("Test", func() {
 					return err
 				}
 				incSrv := incrementServer{}
+				errSrv := errorServer{}
 				test.RegisterIncrementServer(ts, &incSrv)
+				test.RegisterErrorServer(ts, &errSrv)
 				_, errC := ts.Serve()
 
 				return <-errC
@@ -212,9 +222,7 @@ var _ = Describe("Test", func() {
 				ctx, ca := context.WithTimeout(context.Background(), timeout)
 				defer ca()
 				err = cc.Invoke(ctx, totem.Forward, req, reply)
-				if err != nil {
-					return err
-				}
+				Expect(err).NotTo(HaveOccurred())
 
 				respValue := &test.Number{}
 				err = proto.Unmarshal(reply.GetResponse().GetResponse(), respValue)
@@ -222,62 +230,49 @@ var _ = Describe("Test", func() {
 				if err != nil {
 					return err
 				}
-				if respValue.GetValue() != 1235 {
-					return fmt.Errorf("expected 1235, got %d", respValue.GetValue())
-				}
+				Expect(respValue.GetValue()).To(Equal(int64(1235)))
 
-				close(done)
-				return <-errC
-			},
-		}
-		tc.Run(done)
-	})
-
-	It("should forward raw RPCs and receive regular proto messages", func() {
-		done := make(chan struct{})
-		tc := testCase{
-			ServerHandler: func(stream test.Test_TestStreamServer) error {
-				ts, err := totem.NewServer(stream)
-				if err != nil {
-					return err
-				}
-				incSrv := incrementServer{}
-				test.RegisterIncrementServer(ts, &incSrv)
-				_, errC := ts.Serve()
-
-				return <-errC
-			},
-			ClientHandler: func(stream test.Test_TestStreamClient) error {
-				ts, err := totem.NewServer(stream)
-				if err != nil {
-					return err
-				}
-
-				cc, errC := ts.Serve()
-
-				reqBytes, _ := proto.Marshal(&test.Number{
-					Value: 1234,
-				})
-				req := &totem.RPC{
-					ServiceName: "test.Increment",
-					MethodName:  "Inc",
+				errReq := &test.ErrorRequest{ReturnError: true}
+				errReqBytes, _ := proto.Marshal(errReq)
+				req = &totem.RPC{
+					ServiceName: "test.Error",
+					MethodName:  "Error",
 					Content: &totem.RPC_Request{
-						Request: reqBytes,
+						Request: errReqBytes,
 					},
 				}
-				reply := &test.Number{}
-
-				ctx, ca := context.WithTimeout(context.Background(), timeout)
-				defer ca()
+				reply = &totem.RPC{}
 				err = cc.Invoke(ctx, totem.Forward, req, reply)
-				if err != nil {
-					return err
+				Expect(err).To(BeNil())
+				errinfo, _ := anypb.New(&errdetails.ErrorInfo{
+					Reason:   "reason",
+					Domain:   "domain",
+					Metadata: map[string]string{"key": "value"},
+				})
+				expected := &totem.RPC{
+					Content: &totem.RPC_Response{
+						Response: &totem.Response{
+							Response: nil,
+							StatusProto: &statuspb.Status{
+								Code:    int32(codes.Aborted),
+								Message: "error",
+								Details: []*anypb.Any{
+									errinfo,
+								},
+							},
+						},
+					},
+					// Metadata: totem.FromMD(metadata.Pairs("errorKey", "errorValue")),
 				}
-
-				if reply.GetValue() != 1235 {
-					return fmt.Errorf("expected 1235, got %d", reply.GetValue())
+				if !proto.Equal(reply, expected) {
+					diff := cmp.Diff(reply, expected, protocmp.Transform())
+					return fmt.Errorf("Expected\n%s\n%s\n%s\ndiff:\n%s",
+						format.IndentString(prototext.Format(reply), 1),
+						"to equal",
+						format.IndentString(prototext.Format(expected), 1),
+						diff,
+					)
 				}
-
 				close(done)
 				return <-errC
 			},
@@ -1093,6 +1088,7 @@ var _ = Describe("Test", func() {
 })
 
 func checkIncrement(cc grpc.ClientConnInterface) {
+	GinkgoHelper()
 	incClient := test.NewIncrementClient(cc)
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "increment")
 	result, err := incClient.Inc(ctx, &test.Number{
@@ -1103,6 +1099,7 @@ func checkIncrement(cc grpc.ClientConnInterface) {
 }
 
 func checkDecrement(cc grpc.ClientConnInterface) {
+	GinkgoHelper()
 	decClient := test.NewDecrementClient(cc)
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "decrement")
 	result, err := decClient.Dec(ctx, &test.Number{
@@ -1113,6 +1110,7 @@ func checkDecrement(cc grpc.ClientConnInterface) {
 }
 
 func checkMultiply(cc grpc.ClientConnInterface) {
+	GinkgoHelper()
 	mulClient := test.NewMultiplyClient(cc)
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "multiply")
 	result, err := mulClient.Mul(ctx, &test.Operands{
@@ -1124,6 +1122,7 @@ func checkMultiply(cc grpc.ClientConnInterface) {
 }
 
 func checkHash(cc grpc.ClientConnInterface) {
+	GinkgoHelper()
 	hashClient := test.NewHashClient(cc)
 	ctx := metadata.AppendToOutgoingContext(context.Background(), "test", "hash")
 	result, err := hashClient.Hash(ctx, &test.String{

@@ -591,10 +591,6 @@ func (sh *StreamController) handleRequest(ctx context.Context, msg *RPC, md meta
 				info := first.MethodInfo[method]
 				switch {
 				case !info.IsServerStream && !info.IsClientStream:
-					// very important to copy the message here, otherwise the tag
-					// will be overwritten, and we need to preserve it to reply to
-					// the original request
-					//  todo: does the above still apply?
 					response, err := invoker.Invoke(ctx, msg)
 					if err != nil {
 						recordError(span, err)
