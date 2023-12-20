@@ -262,7 +262,7 @@ var _ = FDescribe("Test", func() {
 							},
 						},
 					},
-					// Metadata: totem.FromMD(metadata.Pairs("errorKey", "errorValue")),
+					Metadata: &totem.MD{}, // TODO
 				}
 				if !proto.Equal(reply, expected) {
 					diff := cmp.Diff(reply, expected, protocmp.Transform())

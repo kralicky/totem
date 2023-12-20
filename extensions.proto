@@ -1,9 +1,9 @@
 syntax = "proto3";
+package totem;
 
 import "google/protobuf/descriptor.proto";
 
 option go_package = "github.com/kralicky/totem";
-package totem;
 
 extend google.protobuf.MethodOptions {
   QOS qos = 10001;
@@ -14,7 +14,7 @@ extend google.protobuf.ServiceOptions {
 }
 
 enum ReplicationStrategy {
-  First = 0;
+  First     = 0;
   Broadcast = 1;
 }
 

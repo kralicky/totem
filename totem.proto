@@ -3,7 +3,6 @@ package totem;
 
 import "github.com/kralicky/totem/extensions.proto";
 import "google/protobuf/descriptor.proto";
-import "google/protobuf/empty.proto";
 import "google/rpc/status.proto";
 
 option go_package = "github.com/kralicky/totem";

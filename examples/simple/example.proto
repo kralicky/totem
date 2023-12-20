@@ -1,32 +1,33 @@
 // Example gRPC services:
-// 
-// Define one (or more) streaming RPCs which accept `stream totem.RPC` for both 
-// request and response types. Any RPC with this definition can be used with Totem 
+//
+// Define one (or more) streaming RPCs which accept `stream totem.RPC` for both
+// request and response types. Any RPC with this definition can be used with Totem
 // (its function name is not important).
-// 
+//
 // Additionally, define one or more services containing unary RPCs that you want to
 // use inside the stream.
 
 syntax = "proto3";
-option go_package = "github.com/kralicky/totem/examples/main";
 package simple;
 
 // To use Totem you need to import totem.proto, which contains the totem.RPC
 // definition. If you generate your code using ragu (github.com/kralicky/ragu),
 // this import will be resolved using go modules, and totem.proto will be read
-// directly from your go module cache. If you are using protoc, you may need to 
+// directly from your go module cache. If you are using protoc, you may need to
 // adjust this import path or copy the file to your project manually.
 import "github.com/kralicky/totem/totem.proto";
 
-// This is our streaming RPC. It has a function `Stream()` which has 
+option go_package = "github.com/kralicky/totem/examples/simple;main";
+
+// This is our streaming RPC. It has a function `Stream()` which has
 // `stream totem.RPC` as its request and response types.
 service Example {
   rpc Stream(stream totem.RPC) returns (stream totem.RPC);
 }
 
-// This is the unary RPC which will run inside the above stream using Totem. 
-// For this test, both the client and server sides of the stream will use 
-// the same service, but they can (and should) use different services in a 
+// This is the unary RPC which will run inside the above stream using Totem.
+// For this test, both the client and server sides of the stream will use
+// the same service, but they can (and should) use different services in a
 // real application.
 service Hello {
   rpc Hello(HelloRequest) returns (HelloResponse);

@@ -3,7 +3,7 @@
 package main
 
 import (
-	"github.com/kralicky/ragu"
+	"github.com/kralicky/protols/sdk/codegen"
 	"github.com/magefile/mage/mg"
 )
 
@@ -14,14 +14,5 @@ func All() {
 }
 
 func Generate() error {
-	out, err := ragu.GenerateCode(append(ragu.DefaultGenerators()), "**/*.proto")
-	if err != nil {
-		return err
-	}
-	for _, file := range out {
-		if err := file.WriteToDisk(); err != nil {
-			return err
-		}
-	}
-	return nil
+	return codegen.GenerateWorkspace()
 }
