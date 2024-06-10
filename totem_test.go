@@ -28,11 +28,9 @@ import (
 	"google.golang.org/protobuf/types/known/durationpb"
 )
 
-var (
-	timeout = time.Second * 6
-)
+var timeout = time.Second * 6
 
-var _ = FDescribe("Test", func() {
+var _ = Describe("Test", func() {
 	It("should work with two different servers", func() {
 		a, b := make(chan struct{}), make(chan struct{})
 		tc := testCase{
@@ -226,7 +224,6 @@ var _ = FDescribe("Test", func() {
 
 				respValue := &test.Number{}
 				err = proto.Unmarshal(reply.GetResponse().GetResponse(), respValue)
-
 				if err != nil {
 					return err
 				}
