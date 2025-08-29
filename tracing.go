@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 
-	"go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
 	otelcodes "go.opentelemetry.io/otel/codes"
@@ -77,7 +76,7 @@ func init() {
 // spanInfo returns a span name and all appropriate attributes from the gRPC
 // method and peer address.
 func spanInfo(fullMethod, peerAddress string) (string, []attribute.KeyValue) {
-	attrs := []attribute.KeyValue{otelgrpc.RPCSystemGRPC}
+	attrs := []attribute.KeyValue{semconv.RPCSystemGRPC}
 	name, mAttrs := parseFullMethod(fullMethod)
 	attrs = append(attrs, mAttrs...)
 	attrs = append(attrs, peerAttr(peerAddress)...)
@@ -133,7 +132,7 @@ func parseFullMethod(fullMethod string) (string, []attribute.KeyValue) {
 
 // statusCodeAttr returns status code attribute based on given gRPC code
 func statusCodeAttr(c codes.Code) attribute.KeyValue {
-	return otelgrpc.GRPCStatusCodeKey.Int64(int64(c))
+	return attribute.Key("rpc.grpc.status_code").Int64(int64(c))
 }
 
 func recordErrorStatus(span trace.Span, stat *status.Status) {
